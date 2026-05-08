@@ -690,7 +690,13 @@ async function refreshGraph() {
 
   renderGraph(fresh, nodeList, godNodes ?? [], edges);
   renderMemoryLegend(nodeList, edges, nodes.total ?? null);
-  setText("graph-info", (nodeList.length ?? 0) + " nodes, " + (edges.length ?? 0) + " edges — " + (nodes.total ?? 0) + " total");
+  {
+    const tiers = window.__engram_graph_visibleTiers || {};
+    const shellText = (tiers.project || tiers.god || tiers.child || tiers.edge)
+      ? " · core " + (tiers.project || 0) + " · hubs " + (tiers.god || 0) + " · children " + (tiers.child || 0) + " · leaves " + (tiers.edge || 0)
+      : "";
+    setText("graph-info", (nodeList.length ?? 0) + " nodes, " + (edges.length ?? 0) + " edges — " + (nodes.total ?? 0) + " total" + shellText);
+  }
 }
 
 async function loadActivity() {
@@ -959,7 +965,13 @@ async function loadGraph() {
     }
 
     renderGraph(canvas, nodeList, godNodes ?? [], edges);
-    setText("graph-info", (nodeList.length ?? 0) + " nodes, " + (edges.length ?? 0) + " edges — " + (nodes.total ?? 0) + " total");
+    {
+      const tiers = window.__engram_graph_visibleTiers || {};
+      const shellText = (tiers.project || tiers.god || tiers.child || tiers.edge)
+        ? " · core " + (tiers.project || 0) + " · hubs " + (tiers.god || 0) + " · children " + (tiers.child || 0) + " · leaves " + (tiers.edge || 0)
+        : "";
+      setText("graph-info", (nodeList.length ?? 0) + " nodes, " + (edges.length ?? 0) + " edges — " + (nodes.total ?? 0) + " total" + shellText);
+    }
   }
   // Render memory legend (colors/shapes)
   renderMemoryLegend(nodeList, edges, nodes.total ?? null);
