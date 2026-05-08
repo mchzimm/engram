@@ -3,7 +3,7 @@
  * Stores nodes and edges with confidence tagging, temporal staleness, and query frequency.
  */
 import initSqlJs, { type Database as SqlJsDatabase } from "sql.js";
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync, existsSync, renameSync } from "node:fs";
 import { dirname } from "node:path";
 import { runMigrations } from "../db/migrate.js";
 import type {
@@ -107,6 +107,9 @@ export class GraphStore {
   private _saveQueuedBuffer: Buffer | null = null;
 
   save(): void {
+    this.saveSync();
+    return;
+
     let data: Uint8Array;
     try {
       data = this.db.export();
@@ -170,6 +173,37 @@ export class GraphStore {
 
     // Fire-and-forget
     void writeOnce();
+  }
+
+  /**
+   * Synchronous flush for CLI / shutdown paths where we must guarantee the
+   * database is persisted before the process exits.
+   */
+  private saveSync(): void {
+    let data: Uint8Array;
+    try {
+      data = this.db.export();
+    } catch {
+      try {
+        writeFileSync(this.dbPath, Buffer.from([]));
+      } catch {
+        /* swallow */
+      }
+      return;
+    }
+
+    const buffer = Buffer.from(data);
+    const tmpPath = this.dbPath + ".tmp";
+    try {
+      writeFileSync(tmpPath, buffer);
+      renameSync(tmpPath, this.dbPath);
+    } catch {
+      try {
+        writeFileSync(this.dbPath, buffer);
+      } catch {
+        /* swallow */
+      }
+    }
   }
 
   upsertNode(node: GraphNode, defaults?: { projectRoot?: string; projectBranch?: string; memoryScope?: string }): void {
@@ -876,7 +910,7 @@ export class GraphStore {
   // ─── Lifecycle ────────────────────────────────────────────────
 
   close(): void {
-    this.save();
+    this.saveSync();
     this.db.close();
   }
 

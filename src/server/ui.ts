@@ -403,7 +403,7 @@ tabs.forEach((btn) => {
 // ─── API helpers ──────────────────────────────────────────────
 async function api(path) {
   try {
-    const r = await fetch(path);
+    const r = await fetch(path, { cache: 'no-store' });
     if (!r.ok) return null;
     return await r.json();
   } catch { return null; }
@@ -469,10 +469,13 @@ __GRAPH__
 
 // ─── Scopes / Projects selector ───────────────────────────────
 async function loadScopes() {
-  const data = await api('/api/scopes');
   const sel = document.getElementById('scope-select');
   if (!sel) return;
+
+  const previousValue = sel.value;
+  const data = await api('/api/scopes');
   sel.innerHTML = '';
+
   try {
     if (data && data.scopes && Array.isArray(data.scopes)) {
       for (const s of data.scopes) {
@@ -502,22 +505,33 @@ async function loadScopes() {
     // best-effort — leave the select as-is
   }
 
-  // Default: if there's at least one project, select the first project
-  if (sel.options.length > 0) {
-    // If the first option is a scope entry, that's fine; otherwise choose the first project entry
-    sel.selectedIndex = 0;
+  const restoreSelection = () => {
+    if (!previousValue) return false;
+    const match = Array.from(sel.options).find((opt) => opt.value === previousValue);
+    if (!match) return false;
+    sel.value = previousValue;
+    return true;
+  };
+
+  if (!restoreSelection()) {
+    const preferred = Array.from(sel.options).find((opt) => !opt.disabled && String(opt.value || '').startsWith('scope:accumulative'))
+      || Array.from(sel.options).find((opt) => !opt.disabled && String(opt.value || '').startsWith('proj:'))
+      || Array.from(sel.options).find((opt) => !opt.disabled);
+    if (preferred) sel.value = preferred.value;
   }
 
-  sel.addEventListener('change', () => {
-    // refresh active tab(s)
-    loadOverview();
-    if (document.querySelector('.tab-btn[data-tab="graph"].active')) loadGraph();
-    if (document.querySelector('.tab-btn[data-tab="sessions"].active')) loadSessions();
-    if (document.querySelector('.tab-btn[data-tab="files"].active')) loadFiles();
-    if (document.querySelector('.tab-btn[data-tab="providers"].active')) loadProviders();
-    if (document.querySelector('.tab-btn[data-tab="activity"].active')) loadActivity();
+  const refreshActiveViews = async () => {
+    const tasks = [loadOverview()];
+    if (document.querySelector('.tab-btn[data-tab="graph"].active')) tasks.push(loadGraph());
+    if (document.querySelector('.tab-btn[data-tab="sessions"].active')) tasks.push(loadSessions());
+    if (document.querySelector('.tab-btn[data-tab="files"].active')) tasks.push(loadFiles());
+    if (document.querySelector('.tab-btn[data-tab="providers"].active')) tasks.push(loadProviders());
+    if (document.querySelector('.tab-btn[data-tab="activity"].active')) tasks.push(loadActivity());
+    await Promise.all(tasks);
     showToast('View updated', 1200);
-  });
+  };
+
+  sel.onchange = refreshActiveViews;
 }
 
 // ─── Tab: Overview ────────────────────────────────────────────
@@ -921,60 +935,14 @@ function renderMemoryLegend(nodes, edges, nodesTotal) {
 
   el.innerHTML = '<div style="display:flex;flex-direction:column;gap:8px;align-items:center;">' +
     '<div style="font-family:var(--mono);font-size:12px;color:var(--text-dim);">' + esc(totalLabel) + '</div>' +
+    '<div style="font-family:var(--mono);font-size:11px;color:var(--text-dim);">fill = project color · outline = memory scope · diamond = leaf node</div>' +
     '<div style="display:flex;gap:12px;justify-content:center;align-items:center;">' + projectBoxTotal + globalBoxTotal + personalBoxTotal + '</div>' +
     '<div style="display:flex;gap:12px;justify-content:center;align-items:center;">' + projectBoxVisible + globalBoxVisible + personalBoxVisible + '</div>' +
     '</div>';
 }
 
 async function loadGraph() {
-  if (graphLoaded) return;
-  const [nodes, godNodes] = await Promise.all([
-    scopedApi("/api/graph/nodes?limit=300"),
-    scopedApi("/api/graph/god-nodes"),
-  ]);
-  if (!nodes) return;
-  graphLoaded = true;
-  const canvas = document.getElementById("graph-canvas");
-  if (canvas) {
-    const nodeList = nodes.nodes ?? [];
-    let edges = [];
-    try {
-      const CHUNK = 400;
-      for (let i = 0; i < nodeList.length; i += CHUNK) {
-        const ids = nodeList.slice(i, i + CHUNK).map((n) => n.id).join(",");
-        const eResp = await scopedApi("/api/graph/edges?ids=" + encodeURIComponent(ids));
-        if (eResp && Array.isArray(eResp.edges)) edges = edges.concat(eResp.edges);
-      }
-    } catch {
-      edges = [];
-    }
-
-    try {
-      const nodeById = new Map(nodeList.map((n) => [n.id, n]));
-      const missingIds = new Set();
-      for (const ed of edges) {
-        if (!nodeById.has(ed.source)) missingIds.add(ed.source);
-        if (!nodeById.has(ed.target)) missingIds.add(ed.target);
-      }
-      for (const mid of missingIds) {
-        const p = { id: mid, label: mid, kind: 'default', metadata: { }, sourceFile: '', sourceLocation: null };
-        nodeList.push(p);
-      }
-    } catch {
-      // ignore
-    }
-
-    renderGraph(canvas, nodeList, godNodes ?? [], edges);
-    {
-      const tiers = window.__engram_graph_visibleTiers || {};
-      const shellText = (tiers.project || tiers.god || tiers.child || tiers.edge)
-        ? " · core " + (tiers.project || 0) + " · hubs " + (tiers.god || 0) + " · children " + (tiers.child || 0) + " · leaves " + (tiers.edge || 0)
-        : "";
-      setText("graph-info", (nodeList.length ?? 0) + " nodes, " + (edges.length ?? 0) + " edges — " + (nodes.total ?? 0) + " total" + shellText);
-    }
-  }
-  // Render memory legend (colors/shapes)
-  renderMemoryLegend(nodeList, edges, nodes.total ?? null);
+  return refreshGraph();
 }
 
 // ─── Tab: Providers ───────────────────────────────────────────
@@ -1019,6 +987,7 @@ async function loadProviders() {
 loadScopes().then(() => {
   loadOverview();
   setInterval(loadOverview, 5000);
+  setInterval(() => { void loadScopes(); }, 15000);
   initSSE();
 });
 

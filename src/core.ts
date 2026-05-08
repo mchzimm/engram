@@ -179,8 +179,9 @@ export async function init(
 
     const store = await getStore(root);
     try {
-      // In incremental mode, only clear nodes from changed files
-      // In full mode, clear everything and rebuild
+      // In incremental mode, only clear nodes from changed files.
+      // For first-time runs (no previous mtimes) or full rebuilds, clear
+      // only the current project's data — this DB is shared across projects.
       if (options.incremental && previousMtimes) {
         // Remove stale nodes/edges from files that were re-extracted
         const clearedFiles = new Set<string>();
@@ -191,7 +192,11 @@ export async function init(
           }
         }
       } else {
-        store.clearAll();
+        const projectKeyPrefix = projectStatKey(root, "");
+        store.runSql("DELETE FROM edges WHERE project_root = ?", [root]);
+        store.runSql("DELETE FROM nodes WHERE project_root = ?", [root]);
+        store.runSql("DELETE FROM provider_cache WHERE project_root = ?", [root]);
+        store.runSql("DELETE FROM stats WHERE key LIKE ?", [`${projectKeyPrefix}%`]);
       }
       const branch = readGitBranch(root);
       // Bulk upsert with project scoping so the global DB can host multiple projects.

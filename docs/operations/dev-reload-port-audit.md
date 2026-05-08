@@ -49,6 +49,11 @@ Environment knobs
 - WAIT_RETRIES= number of attempts waiting for port to be free (default 16)
 - SLEEP_INTERVAL= seconds to sleep between attempts (default 0.5)
 
+Important note from the batch-init work
+
+- The graph DB is shared across projects. `engram init` now clears only the current project's rows/stat keys and flushes synchronously on close, so running incremental init for one project no longer wipes the others.
+- Batch initialization should still run with the server stopped when possible, to avoid concurrent writers on the same global DB file.
+
 Todo / Follow-ups (issues created)
 
 - [ ] Add a small integration test that verifies the audit line is written on server startup (requires test harness that can spawn the server).

@@ -146,24 +146,50 @@ function decodeProjectId(projectId: string | null): string | null {
 // Helper: enumerate known projects recorded in the stats table.
 // Returns array sorted by lastModified desc (newest first). Each entry has
 // { id, root, name, lastModified } where id is base64(root).
-async function listKnownProjects(store: any): Promise<Array<{ id: string; root: string; name: string; lastModified: number }>> {
+async function listKnownProjects(
+  store: any,
+  fallbackRoots: string[] = []
+): Promise<Array<{ id: string; root: string; name: string; lastModified: number }>> {
   try {
-    const stmt = store.prepare("SELECT value FROM stats WHERE key LIKE ?");
-    stmt.bind(["%:project_root"]);
-    const roots: string[] = [];
-    while (stmt.step()) {
-      try {
-        const row = stmt.getAsObject();
-        const v = row.value as string;
-        if (v) roots.push(v);
-      } catch {
-        // ignore malformed
-      }
-    }
-    stmt.free();
+    const roots = new Set<string>();
 
-    const uniq = Array.from(new Set(roots));
-    const projects = uniq.map((root) => {
+    const addRoot = (candidate: unknown): void => {
+      if (typeof candidate !== "string") return;
+      const root = candidate.trim();
+      if (!root) return;
+      roots.add(root);
+    };
+
+    const collectRoots = (sql: string, bindValues: unknown[] = []): void => {
+      const stmt = store.prepare(sql);
+      try {
+        if (bindValues.length > 0) stmt.bind(bindValues);
+        while (stmt.step()) {
+          try {
+            const row = stmt.getAsObject();
+            addRoot((row.root as string | undefined) ?? (row.value as string | undefined) ?? (row.project_root as string | undefined));
+          } catch {
+            // ignore malformed rows
+          }
+        }
+      } finally {
+        try {
+          stmt.free();
+        } catch {
+          // ignore cleanup failures
+        }
+      }
+    };
+
+    // Persisted stats roots (legacy + current write path)
+    collectRoots("SELECT value AS root FROM stats WHERE key LIKE ?", ["%:project_root"]);
+    // New projects can appear in the graph before the stats row is written.
+    collectRoots("SELECT DISTINCT project_root AS root FROM nodes WHERE project_root IS NOT NULL AND project_root <> ''");
+    collectRoots("SELECT DISTINCT project_root AS root FROM edges WHERE project_root IS NOT NULL AND project_root <> ''");
+
+    for (const root of fallbackRoots) addRoot(root);
+
+    const projects = [...roots].map((root) => {
       let mtime = 0;
       try {
         mtime = statSync(root).mtimeMs;
@@ -184,7 +210,7 @@ async function listKnownProjects(store: any): Promise<Array<{ id: string; root: 
       };
     });
 
-    projects.sort((a, b) => b.lastModified - a.lastModified);
+    projects.sort((a, b) => b.lastModified - a.lastModified || a.name.localeCompare(b.name));
     return projects;
   } catch {
     return [];
@@ -735,13 +761,13 @@ async function handleScopes(
   try {
     const store = await getStore(projectRoot);
     try {
-      const projects = await listKnownProjects(store);
+      const projects = await listKnownProjects(store, [projectRoot]);
       const scopes = [
         { id: "accumulative", label: "ACCUMMULATIVE MEMORIES" },
         { id: "global", label: "GLOBAL MEMORIES" },
         { id: "personal", label: "PERSONAL MEMORIES" },
       ];
-      json(res, 200, { scopes, projects });
+      json(res, 200, { scopes, projects }, { "Cache-Control": "no-store" });
     } finally {
       store.close();
     }
@@ -799,7 +825,7 @@ async function handleHookLog(
       // Aggregate hook logs across all known projects
       const store = await getStore(projectRoot);
       try {
-        const projects = await listKnownProjects(store);
+        const projects = await listKnownProjects(store, [projectRoot]);
         let combined: any[] = [];
         for (const p of projects) {
           try {
@@ -896,7 +922,7 @@ function handleHookLogSummary(
       (async () => {
         const store = await getStore(projectRoot);
         try {
-          const projects = await listKnownProjects(store);
+          const projects = await listKnownProjects(store, [projectRoot]);
           let combined: any[] = [];
           for (const p of projects) {
             try {
@@ -958,7 +984,7 @@ async function handleTokens(
 
       if (scope === "accumulative") {
         // Sum per-project stats across all known projects
-        const projects = await listKnownProjects(store);
+        const projects = await listKnownProjects(store, [projectRoot]);
         let totalSessions = 0;
         let totalNaiveTokens = 0;
         let totalGraphTokens = 0;
