@@ -22,7 +22,7 @@
  *   removed on shutdown. Checked by component-status.ts for HUD display.
  */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { writeFileSync, unlinkSync, mkdirSync, existsSync, statSync, appendFileSync } from "node:fs"; import { homedir } from "node:os";
+import { writeFileSync, unlinkSync, mkdirSync, existsSync, statSync, appendFileSync } from "node:fs"; import { homedir, tmpdir } from "node:os";
 import { join, resolve, relative, basename } from "node:path";
 import { query, stats, learn, init, getStore, projectStatKey } from "../core.js";
 import { readHookLog, logHookEvent } from "../intelligence/hook-log.js";
@@ -189,26 +189,32 @@ async function listKnownProjects(
 
     for (const root of fallbackRoots) addRoot(root);
 
-    const projects = [...roots].map((root) => {
-      let mtime = 0;
-      try {
-        mtime = statSync(root).mtimeMs;
-      } catch {
+    const tempRoot = resolve(tmpdir());
+    const projects = [...roots]
+      .filter((root) => {
+        const normalized = resolve(root);
+        return !normalized.startsWith(tempRoot);
+      })
+      .map((root) => {
+        let mtime = 0;
         try {
-          const lm = store.getStat(projectStatKey(root, "last_mined"));
-          if (lm) mtime = Number(lm) || 0;
+          mtime = statSync(root).mtimeMs;
         } catch {
-          mtime = 0;
+          try {
+            const lm = store.getStat(projectStatKey(root, "last_mined"));
+            if (lm) mtime = Number(lm) || 0;
+          } catch {
+            mtime = 0;
+          }
         }
-      }
-      const name = basename(root) || root;
-      return {
-        id: Buffer.from(root).toString("base64"),
-        root,
-        name: name.length > 40 ? name.slice(0, 40) : name,
-        lastModified: mtime || 0,
-      };
-    });
+        const name = basename(root) || root;
+        return {
+          id: Buffer.from(root).toString("base64"),
+          root,
+          name: name.length > 40 ? name.slice(0, 40) : name,
+          lastModified: mtime || 0,
+        };
+      });
 
     projects.sort((a, b) => b.lastModified - a.lastModified || a.name.localeCompare(b.name));
     return projects;
