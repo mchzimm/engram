@@ -702,14 +702,31 @@ async function refreshGraph() {
     // ignore augmentation failures — fall back to drawing whatever we have
   }
 
-  renderGraph(fresh, nodeList, godNodes ?? [], edges);
-  renderMemoryLegend(nodeList, edges, nodes.total ?? null);
-  {
-    const tiers = window.__engram_graph_visibleTiers || {};
-    const shellText = (tiers.project || tiers.god || tiers.child || tiers.edge)
-      ? " · core " + (tiers.project || 0) + " · hubs " + (tiers.god || 0) + " · children " + (tiers.child || 0) + " · leaves " + (tiers.edge || 0)
-      : "";
-    setText("graph-info", (nodeList.length ?? 0) + " nodes, " + (edges.length ?? 0) + " edges — " + (nodes.total ?? 0) + " total" + shellText);
+  const streamGraph = window.__engram_graph_renderGraphPriorityStream;
+  if (typeof streamGraph === "function") {
+    try {
+      await streamGraph(fresh, nodeList, godNodes ?? [], edges);
+    } catch (e) {
+      renderGraph(fresh, nodeList, godNodes ?? [], edges);
+      renderMemoryLegend(nodeList, edges, nodes.total ?? null);
+      {
+        const tiers = window.__engram_graph_visibleTiers || {};
+        const shellText = (tiers.project || tiers.god || tiers.child || tiers.edge)
+          ? " · core " + (tiers.project || 0) + " · hubs " + (tiers.god || 0) + " · children " + (tiers.child || 0) + " · leaves " + (tiers.edge || 0)
+          : "";
+        setText("graph-info", (nodeList.length ?? 0) + " nodes, " + (edges.length ?? 0) + " edges — " + (nodes.total ?? 0) + " total" + shellText);
+      }
+    }
+  } else {
+    renderGraph(fresh, nodeList, godNodes ?? [], edges);
+    renderMemoryLegend(nodeList, edges, nodes.total ?? null);
+    {
+      const tiers = window.__engram_graph_visibleTiers || {};
+      const shellText = (tiers.project || tiers.god || tiers.child || tiers.edge)
+        ? " · core " + (tiers.project || 0) + " · hubs " + (tiers.god || 0) + " · children " + (tiers.child || 0) + " · leaves " + (tiers.edge || 0)
+        : "";
+      setText("graph-info", (nodeList.length ?? 0) + " nodes, " + (edges.length ?? 0) + " edges — " + (nodes.total ?? 0) + " total" + shellText);
+    }
   }
 }
 
