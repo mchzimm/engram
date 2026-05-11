@@ -15,6 +15,7 @@ import type {
   NodeKind,
 } from "./schema.js";
 import type { CachedContext } from "../providers/types.js";
+import { isNoMatchPlaceholderText } from "../miners/conclusions-miner.js";
 
 export class GraphStore {
   private db: SqlJsDatabase;
@@ -531,8 +532,10 @@ export class GraphStore {
     else stmt.bind([topN]);
     while (stmt.step()) {
       const row = stmt.getAsObject();
+      const node = this.rowToNode(row);
+      if (isNoMatchPlaceholderText(node.label)) continue;
       results.push({
-        node: this.rowToNode(row),
+        node,
         degree: row.degree as number,
       });
     }

@@ -273,17 +273,20 @@ export async function query(
       // non-fatal
     }
 
-    // Aggressive auto: ingest the query result into memory in the background
+    // Aggressive auto: ingest the query result into memory in the background.
+    // Skip placeholder no-match results so we don't learn "no results" as a fact.
     try {
-      void import("./intercept/auto-memory.js").then((m) => {
-        try {
-          // Use a shortened question as a relPath hint for dedupe keys
-          const hint = `query:${question.slice(0, 200)}`;
-          return m.performAutoLearnForContent(projectRoot, result.text, hint, `auto:query`);
-        } catch {
-          return undefined as unknown as Promise<void>;
-        }
-      }).catch(() => undefined as unknown as Promise<void>);
+      if (!isNoMatchPlaceholderText(result.text)) {
+        void import("./intercept/auto-memory.js").then((m) => {
+          try {
+            // Use a shortened question as a relPath hint for dedupe keys
+            const hint = `query:${question.slice(0, 200)}`;
+            return m.performAutoLearnForContent(projectRoot, result.text, hint, `auto:query`);
+          } catch {
+            return undefined as unknown as Promise<void>;
+          }
+        }).catch(() => undefined as unknown as Promise<void>);
+      }
     } catch {
       /* swallow */
     }
@@ -574,7 +577,7 @@ export async function computeKeywordIDF(
   }
 }
 
-import { generateConclusionNodes } from "./miners/conclusions-miner.js";
+import { generateConclusionNodes, isNoMatchPlaceholderText } from "./miners/conclusions-miner.js";
 import { extractLinkCandidates } from "./miners/linking-helpers.js";
 
 export async function learn(

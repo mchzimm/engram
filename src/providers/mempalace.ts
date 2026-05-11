@@ -12,6 +12,7 @@
 import { execFile } from "node:child_process";
 import { getStore } from "../core.js";
 import { DEFAULT_CACHE_TTL_SEC } from "./types.js";
+import { isNoMatchPlaceholderText } from "../miners/conclusions-miner.js";
 import type {
   ContextProvider,
   NodeContext,
@@ -168,6 +169,8 @@ function searchMempalace(query: string): Promise<string | null> {
 }
 
 function formatResults(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed || isNoMatchPlaceholderText(trimmed)) return null;
   try {
     const parsed = JSON.parse(raw);
     const results = Array.isArray(parsed)

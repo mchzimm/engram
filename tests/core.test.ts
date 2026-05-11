@@ -145,8 +145,13 @@ describe("Core — learn", () => {
     expect(result.nodesAdded).toBeGreaterThanOrEqual(1);
   });
 
-  it("returns 0 for no extractable pattern", async () => {
-    const result = await learn(tmpDir, "hello world");
+  it("returns 0 for empty text", async () => {
+    const result = await learn(tmpDir, "");
+    expect(result.nodesAdded).toBe(0);
+  });
+
+  it("ignores placeholder no-match text", async () => {
+    const result = await learn(tmpDir, "No matching nodes found.");
     expect(result.nodesAdded).toBe(0);
   });
 });

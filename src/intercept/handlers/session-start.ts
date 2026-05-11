@@ -25,6 +25,7 @@ import { basename, dirname, join, resolve } from "node:path";
 
 const execFileAsync = promisify(execFile);
 import { godNodes, mistakes, stats, getStore, projectStatKey } from "../../core.js";
+import { isNoMatchPlaceholderText } from "../../miners/conclusions-miner.js";
 import { findProjectRoot, isValidCwd } from "../context.js";
 import { isHookDisabled, PASSTHROUGH, type HandlerResult } from "../safety.js";
 import { buildSessionContextResponse } from "../formatter.js";
@@ -156,57 +157,65 @@ function formatBrief(args: {
  * Timeout: 1.5s hard cap — runs in parallel with graph queries.
  */
 async function queryMempalace(projectName: string): Promise<string | null> {
+  const searchQueries = [
+    `${projectName} decisions architecture patterns`,
+    projectName,
+  ];
+
   try {
-    const { stdout } = await execFileAsync(
-      "mcp-mempalace",
-      ["mempalace-search", "--query", projectName],
-      { timeout: 1500, encoding: "utf-8" }
-    );
-    const trimmed = stdout.trim();
-    if (!trimmed || trimmed.length < 20) return null;
+    for (const query of searchQueries) {
+      const { stdout } = await execFileAsync(
+        "mcp-mempalace",
+        ["mempalace-search", "--query", query],
+        { timeout: 1500, encoding: "utf-8" }
+      );
+      const trimmed = stdout.trim();
+      if (!trimmed || trimmed.length < 20) continue;
+      if (isNoMatchPlaceholderText(trimmed)) continue;
 
-    // Parse the output — mempalace returns JSON with a results array.
-    try {
-      const parsed = JSON.parse(trimmed);
-      const results = Array.isArray(parsed)
-        ? parsed
-        : Array.isArray(parsed?.results)
-          ? parsed.results
-          : [];
-      if (results.length === 0) return null;
+      // Parse the output — mempalace returns JSON with a results array.
+      try {
+        const parsed = JSON.parse(trimmed);
+        const results = Array.isArray(parsed)
+          ? parsed
+          : Array.isArray(parsed?.results)
+            ? parsed.results
+            : [];
+        if (results.length === 0) continue;
 
-      const lines: string[] = ["[mempalace] Recent context:"];
-      for (const r of results.slice(0, 3)) {
-        const content =
-          typeof r === "string"
-            ? r
-            : typeof r?.content === "string"
-              ? r.content
-              : typeof r?.document === "string"
-                ? r.document
-                : null;
-        if (content) {
-          const short =
-            content.length > 120
-              ? content.slice(0, 117) + "..."
-              : content;
-          lines.push(`  - ${short}`);
+        const lines: string[] = ["[mempalace] Recent context:"];
+        for (const r of results.slice(0, 3)) {
+          const content =
+            typeof r === "string"
+              ? r
+              : typeof r?.content === "string"
+                ? r.content
+                : typeof r?.document === "string"
+                  ? r.document
+                  : null;
+          if (content) {
+            const short =
+              content.length > 120
+                ? content.slice(0, 117) + "..."
+                : content;
+            lines.push(`  - ${short}`);
+          }
         }
+        if (lines.length > 1) return lines.join("\n");
+      } catch {
+        // Not JSON — use raw output, truncated.
+        const maxLen = 400;
+        const capped =
+          trimmed.length > maxLen
+            ? trimmed.slice(0, maxLen - 3) + "..."
+            : trimmed;
+        return `[mempalace] ${capped}`;
       }
-      return lines.length > 1 ? lines.join("\n") : null;
-    } catch {
-      // Not JSON — use raw output, truncated.
-      const maxLen = 400;
-      const capped =
-        trimmed.length > maxLen
-          ? trimmed.slice(0, maxLen - 3) + "..."
-          : trimmed;
-      return `[mempalace] ${capped}`;
     }
   } catch {
     // mcp-mempalace not installed, timed out, or errored. Silent.
-    return null;
   }
+  return null;
 }
 
 /** Human-readable "N ago" for a millisecond duration. */

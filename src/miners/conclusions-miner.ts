@@ -2,6 +2,20 @@ import type { GraphNode, GraphEdge } from "../graph/schema.js";
 
 import { computeCanonicalId } from "../graph/canonical.js";
 
+const NO_MATCH_PLACEHOLDER_PATTERNS = [
+  /No matching nodes found/i,
+  /No nodes matching\b/i,
+  /No matching memories found/i,
+  /No results? found/i,
+];
+
+export function isNoMatchPlaceholderText(text: string): boolean {
+  if (!text || typeof text !== "string") return false;
+  const compact = text.replace(/\s+/g, " ").trim();
+  if (!compact || compact.length > 180) return false;
+  return NO_MATCH_PLACEHOLDER_PATTERNS.some((pattern) => pattern.test(compact));
+}
+
 function makeId(...parts: string[]): string {
   return parts
     .filter(Boolean)
@@ -23,7 +37,7 @@ function firstSentence(s: string): string {
 export function generateConclusionNodes(text: string, sourceLabel = "session-summary") {
   const nodes: GraphNode[] = [];
   const edges: GraphEdge[] = [];
-  if (!text || typeof text !== "string") return { nodes, edges };
+  if (!text || typeof text !== "string" || isNoMatchPlaceholderText(text)) return { nodes, edges };
 
   const now = Date.now();
   // Build a high-level conclusion node (pattern) using the first sentence.

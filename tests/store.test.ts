@@ -165,6 +165,23 @@ describe("GraphStore", () => {
       expect(ids).not.toContain("myfile");
       expect(ids).not.toContain("myimport");
     });
+
+    it("skips placeholder no-match conclusion nodes", () => {
+      store.upsertNode(makeNode("placeholder", {
+        label: "Conclusion: No matching nodes found.",
+        kind: "pattern",
+      }));
+      store.upsertNode(makeNode("real", {
+        label: "real()",
+        kind: "function",
+      }));
+      store.upsertEdge(makeEdge("placeholder", "real"));
+
+      const gods = store.getGodNodes(5);
+      const ids = gods.map((g) => g.node.id);
+      expect(ids).not.toContain("placeholder");
+      expect(ids).toContain("real");
+    });
   });
 
   describe("stats", () => {
