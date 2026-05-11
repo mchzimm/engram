@@ -205,6 +205,24 @@ describe("GraphStore", () => {
       expect(gods[0].node.id).toBe("extractedHub");
       expect(gods[1].node.id).toBe("inferredHub");
     });
+
+    it("hides session brief conclusion nodes", () => {
+      store.upsertNode(makeNode("brief", {
+        label: "Conclusion: [engramx] Project brief for worlds.ai.rust (branch: demo)",
+        kind: "pattern",
+        sourceFile: "session-start",
+      }));
+      store.upsertNode(makeNode("real", {
+        label: "real()",
+        kind: "function",
+      }));
+      store.upsertEdge(makeEdge("brief", "real"));
+
+      const gods = store.getGodNodes(5);
+      const ids = gods.map((g) => g.node.id);
+      expect(ids).not.toContain("brief");
+      expect(ids).toContain("real");
+    });
   });
 
   describe("stats", () => {

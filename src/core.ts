@@ -577,7 +577,7 @@ export async function computeKeywordIDF(
   }
 }
 
-import { generateConclusionNodes, isNoMatchPlaceholderText } from "./miners/conclusions-miner.js";
+import { generateConclusionNodes, isNoMatchPlaceholderText, isSessionBriefNoiseText } from "./miners/conclusions-miner.js";
 import { extractLinkCandidates } from "./miners/linking-helpers.js";
 
 export async function learn(
@@ -604,6 +604,7 @@ export async function learn(
       // best-effort — non-fatal if stats write fails
     }
 
+    if (isSessionBriefNoiseText(text)) return { nodesAdded: 0 };
     if (combinedNodes.length === 0 && combinedEdges.length === 0) return { nodesAdded: 0 };
 
     // Bulk upsert nodes + edges (project-scoped)

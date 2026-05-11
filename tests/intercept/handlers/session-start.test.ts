@@ -3,7 +3,7 @@
  * gets actual god nodes + stats + mistakes from the graph.
  */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { init, learn } from "../../../src/core.js";
+import { init, learn, stats } from "../../../src/core.js";
 import {
   handleSessionStart,
   type SessionStartHookPayload,
@@ -130,6 +130,31 @@ export function transaction(fn: () => void) { fn(); }
     // The learned bug mentions "null pointer" and "verifyToken".
     const text = wrapped.hookSpecificOutput.additionalContext;
     expect(text).toContain("landmines");
+  });
+
+  it("primes a fresh project before composing the brief", async () => {
+    const freshRoot = mkdtempSync(join(tmpdir(), "engram-ss-prime-"));
+    mkdirSync(join(freshRoot, ".engram"), { recursive: true });
+    mkdirSync(join(freshRoot, "src"), { recursive: true });
+    writeFileSync(
+      join(freshRoot, "src", "alpha.ts"),
+      `export function alpha() { return 1; }\n`
+    );
+
+    try {
+      const result = await handleSessionStart({
+        hook_event_name: "SessionStart",
+        cwd: freshRoot,
+        source: "startup",
+      });
+      expect(result).not.toBe(PASSTHROUGH);
+      const s = await stats(freshRoot);
+      expect(s.nodes).toBeGreaterThan(0);
+      expect(s.extractedPct).toBeGreaterThan(0);
+      expect(s.lastMined).toBeGreaterThan(0);
+    } finally {
+      rmSync(freshRoot, { recursive: true, force: true });
+    }
   });
 
   it("passes through when cwd is outside any engram project", async () => {

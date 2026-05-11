@@ -154,6 +154,21 @@ describe("Core — learn", () => {
     const result = await learn(tmpDir, "No matching nodes found.");
     expect(result.nodesAdded).toBe(0);
   });
+
+  it("ignores session brief noise text", async () => {
+    const result = await learn(
+      tmpDir,
+      `[engramx] Project brief for worlds.ai.rust (branch: demo)
+Graph: 22 nodes, 278 edges, 0% extracted. Last mined: unknown.
+
+Core entities (most connected):
+  - Conclusion: [engramx] Project brief for worlds.ai.rust (branch: demo)
+Graph: 28 nodes, 181 edges, 0% extracted. [pattern] (50 conn) — session-start
+
+Tip: engram intercepts Read/Edit/Write/Bash tool calls.`
+    );
+    expect(result.nodesAdded).toBe(0);
+  });
 });
 
 describe("Core — init with skills (v0.2)", () => {

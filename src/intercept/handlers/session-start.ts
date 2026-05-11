@@ -275,9 +275,11 @@ export async function handleSessionStart(
   }
 
   if (shouldPrimeMine) {
-    void init(projectRoot, { incremental: true }).catch(() => {
-      // best-effort background priming only
-    });
+    try {
+      await init(projectRoot, { incremental: true });
+    } catch {
+      // best-effort but synchronous for the initial brief
+    }
   }
 
   try {

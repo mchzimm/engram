@@ -9,11 +9,23 @@ const NO_MATCH_PLACEHOLDER_PATTERNS = [
   /No results? found/i,
 ];
 
+const SESSION_BRIEF_NOISE_PATTERNS = [
+  /^(?:Conclusion:\s*)?(?:\[[^\]]+\]\s*)?Project brief for\b/i,
+  /^(?:Conclusion:\s*)?(?:\[[^\]]+\]\s*)?Tip:\s*engram intercepts\b/i,
+];
+
 export function isNoMatchPlaceholderText(text: string): boolean {
   if (!text || typeof text !== "string") return false;
   const compact = text.replace(/\s+/g, " ").trim();
   if (!compact || compact.length > 180) return false;
   return NO_MATCH_PLACEHOLDER_PATTERNS.some((pattern) => pattern.test(compact));
+}
+
+export function isSessionBriefNoiseText(text: string): boolean {
+  if (!text || typeof text !== "string") return false;
+  const compact = text.replace(/\s+/g, " ").trim();
+  if (!compact || compact.length > 6000) return false;
+  return SESSION_BRIEF_NOISE_PATTERNS.some((pattern) => pattern.test(compact));
 }
 
 function makeId(...parts: string[]): string {
@@ -37,7 +49,7 @@ function firstSentence(s: string): string {
 export function generateConclusionNodes(text: string, sourceLabel = "session-summary") {
   const nodes: GraphNode[] = [];
   const edges: GraphEdge[] = [];
-  if (!text || typeof text !== "string" || isNoMatchPlaceholderText(text)) return { nodes, edges };
+  if (!text || typeof text !== "string" || isNoMatchPlaceholderText(text) || isSessionBriefNoiseText(text)) return { nodes, edges };
 
   const now = Date.now();
   // Build a high-level conclusion node (pattern) using the first sentence.
