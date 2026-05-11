@@ -8,9 +8,12 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createServer } from "node:http";
 import { join } from "node:path";
-import { mkdirSync, mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { createHttpServer } from "../../src/server/http.js";
+import { getStore } from "../../src/core.js";
+import { recordSession } from "../../src/intelligence/token-tracker.js";
+import { logHookEvent } from "../../src/intelligence/hook-log.js";
 
 const TEST_PROJECT = mkdtempSync(join(tmpdir(), "engram-http-test-"));
 const TEST_TOKEN = "test-token-abcdef0123456789abcdef0123456789";
@@ -115,6 +118,66 @@ describe("GET /stats", () => {
     const { status, body } = await get("/stats");
     expect(status).toBe(200);
     expect(typeof (body as { nodes: number }).nodes).toBe("number");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// project discovery + accumulative aggregates
+// ---------------------------------------------------------------------------
+
+const DISCOVERY_ROOT = join(process.cwd(), `.tmp-engram-http-project-${Date.now()}`);
+
+async function seedDiscoveryProject(): Promise<void> {
+  mkdirSync(join(DISCOVERY_ROOT, ".engram"), { recursive: true });
+  const store = await getStore(DISCOVERY_ROOT);
+  try {
+    recordSession(store, 1800, 600, DISCOVERY_ROOT);
+  } finally {
+    store.close();
+  }
+  logHookEvent(DISCOVERY_ROOT, {
+    event: "PreToolUse",
+    tool: "Read",
+    decision: "deny",
+    wouldHaveRead: 1200,
+    injected: 300,
+    tokensSaved: 900,
+  });
+}
+
+describe("dashboard project discovery", () => {
+  beforeAll(async () => {
+    await seedDiscoveryProject();
+  });
+
+  afterAll(() => {
+    rmSync(DISCOVERY_ROOT, { recursive: true, force: true });
+  });
+
+  it("discovers projects from namespaced session stats", async () => {
+    const { status, body } = await get("/api/scopes");
+    expect(status).toBe(200);
+    const projects = (body as { projects: Array<{ root: string }> }).projects;
+    expect(projects.some((p) => p.root === DISCOVERY_ROOT)).toBe(true);
+  });
+
+  it("aggregates token savings across discovered projects", async () => {
+    const { status, body } = await get("/api/tokens?scope=accumulative");
+    expect(status).toBe(200);
+    const tokens = body as { totalSessions: number; totalSaved: number; sessions: unknown[] };
+    expect(tokens.totalSessions).toBeGreaterThan(0);
+    expect(tokens.totalSaved).toBeGreaterThan(0);
+    expect(Array.isArray(tokens.sessions)).toBe(true);
+    expect(tokens.sessions.length).toBeGreaterThan(0);
+  });
+
+  it("includes decision distribution for discovered project logs", async () => {
+    const { status, body } = await get("/api/hook-log/summary?scope=accumulative");
+    expect(status).toBe(200);
+    const summary = body as { byDecision?: Record<string, number>; readDenyCount?: number; estimatedTokensSaved?: number };
+    expect(summary.byDecision?.deny ?? 0).toBeGreaterThan(0);
+    expect(summary.readDenyCount ?? 0).toBeGreaterThan(0);
+    expect(summary.estimatedTokensSaved ?? 0).toBeGreaterThan(0);
   });
 });
 

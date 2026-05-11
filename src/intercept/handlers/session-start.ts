@@ -24,7 +24,7 @@ import { promisify } from "node:util";
 import { basename, dirname, join, resolve } from "node:path";
 
 const execFileAsync = promisify(execFile);
-import { godNodes, mistakes, stats } from "../../core.js";
+import { godNodes, mistakes, stats, getStore, projectStatKey } from "../../core.js";
 import { findProjectRoot, isValidCwd } from "../context.js";
 import { isHookDisabled, PASSTHROUGH, type HandlerResult } from "../safety.js";
 import { buildSessionContextResponse } from "../formatter.js";
@@ -232,11 +232,8 @@ export async function handleSessionStart(
 ): Promise<HandlerResult> {
   if (payload.hook_event_name !== "SessionStart") return PASSTHROUGH;
 
-  // Include resumed sessions too — inject the brief even on resume so
-  // session context is always available to the agent. onSessionStart is
-  // idempotent / dedupes, so repeated injections are safe.
   const source = payload.source ?? "startup";
-  // fall through for 'resume' — inject on resume as well.
+  if (source === "resume") return PASSTHROUGH;
 
   // cwd must be a real absolute directory. Anything else causes
   // findProjectRoot to walk from the ambient process cwd, which could
@@ -251,6 +248,20 @@ export async function handleSessionStart(
 
   // Kill switch.
   if (isHookDisabled(projectRoot)) return PASSTHROUGH;
+
+  // Mark the project as recently seen so the UI can surface it even if
+  // the graph is still sparse or auto-memory is disabled.
+  try {
+    const store = await getStore(projectRoot);
+    try {
+      store.setStat(projectStatKey(projectRoot, "project_root"), projectRoot);
+      store.setStat(projectStatKey(projectRoot, "last_seen"), String(Date.now()));
+    } finally {
+      store.close();
+    }
+  } catch {
+    // best-effort only
+  }
 
   try {
     // Compose the brief from existing core APIs. Any failure in any
@@ -278,9 +289,6 @@ export async function handleSessionStart(
       })),
       queryMempalace(projectName),
     ]);
-
-    // If the graph is empty, there's nothing useful to inject.
-    if (graphStats.nodes === 0 && gods.length === 0) return PASSTHROUGH;
 
     const text = formatBrief({
       projectName,

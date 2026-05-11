@@ -590,21 +590,22 @@ export async function learn(
   const combinedNodes = [...sessionResult.nodes, ...conclusionResult.nodes];
   const combinedEdges = [...sessionResult.edges, ...conclusionResult.edges];
 
-  if (combinedNodes.length === 0 && combinedEdges.length === 0) return { nodesAdded: 0 };
-
   const store = await getStore(projectRoot);
   try {
-    // Bulk upsert nodes + edges (project-scoped)
-    store.bulkUpsert(combinedNodes, combinedEdges, projectRoot, undefined, memoryScope);
-
-    // Ensure the project is discoverable even when graph content was created
-    // by a manual `learn` call (no full init). Write a namespaced project_root
-    // stat entry so the dashboard's project list includes this project.
+    // Ensure the project is discoverable even when a learn call produces no
+    // graph nodes (for example, a terse summary or an empty session brief).
     try {
       store.setStat(projectStatKey(projectRoot, "project_root"), projectRoot);
+      store.setStat(projectStatKey(projectRoot, "last_seen"), String(Date.now()));
     } catch {
       // best-effort — non-fatal if stats write fails
     }
+
+    if (combinedNodes.length === 0 && combinedEdges.length === 0) return { nodesAdded: 0 };
+
+    // Bulk upsert nodes + edges (project-scoped)
+    store.bulkUpsert(combinedNodes, combinedEdges, projectRoot, undefined, memoryScope);
+
 
     // Post-insert: create linking edges from conclusion nodes to existing
     // graph nodes by simple keyword overlap. This helps surface relations

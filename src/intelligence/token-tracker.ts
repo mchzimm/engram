@@ -46,6 +46,11 @@ export function recordSession(
   const graphKey = root ? projectStatKey(root, "total_graph_tokens") : "total_graph_tokens";
   const savedKey = root ? projectStatKey(root, "total_tokens_saved") : "total_tokens_saved";
 
+  if (root) {
+    store.setStat(projectStatKey(root, "project_root"), root);
+    store.setStat(projectStatKey(root, "last_seen"), String(Date.now()));
+  }
+
   store.setStat(sessKey, String(prev.totalSessions + 1));
   store.setStat(naiveKey, String(prev.totalNaiveTokens + naiveTokens));
   store.setStat(graphKey, String(prev.totalGraphTokens + graphTokens));

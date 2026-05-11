@@ -143,6 +143,23 @@ function decodeProjectId(projectId: string | null): string | null {
   }
 }
 
+function decodeProjectRootFromStatKey(statKey: string | null | undefined): string | null {
+  if (!statKey || typeof statKey !== "string") return null;
+  if (!statKey.startsWith("project:")) return null;
+
+  const rest = statKey.slice("project:".length);
+  const sep = rest.indexOf(":");
+  if (sep <= 0) return null;
+
+  const encodedRoot = rest.slice(0, sep);
+  try {
+    const decoded = Buffer.from(encodedRoot, "base64").toString("utf-8");
+    return decoded.trim() ? decoded : null;
+  } catch {
+    return null;
+  }
+}
+
 // Helper: enumerate known projects recorded in the stats table.
 // Returns array sorted by lastModified desc (newest first). Each entry has
 // { id, root, name, lastModified } where id is base64(root).
@@ -160,14 +177,21 @@ async function listKnownProjects(
       roots.add(root);
     };
 
-    const collectRoots = (sql: string, bindValues: unknown[] = []): void => {
+    const collectRoots = (
+      sql: string,
+      bindValues: unknown[] = [],
+      rowToRoot: (row: Record<string, unknown>) => unknown = (row) =>
+        (row.root as string | undefined) ??
+        (row.value as string | undefined) ??
+        (row.project_root as string | undefined)
+    ): void => {
       const stmt = store.prepare(sql);
       try {
         if (bindValues.length > 0) stmt.bind(bindValues);
         while (stmt.step()) {
           try {
-            const row = stmt.getAsObject();
-            addRoot((row.root as string | undefined) ?? (row.value as string | undefined) ?? (row.project_root as string | undefined));
+            const row = stmt.getAsObject() as Record<string, unknown>;
+            addRoot(rowToRoot(row));
           } catch {
             // ignore malformed rows
           }
@@ -181,7 +205,12 @@ async function listKnownProjects(
       }
     };
 
-    // Persisted stats roots (legacy + current write path)
+    // Persisted stats roots (legacy + current write path).
+    // We also scan every namespaced project stat key so projects that
+    // only have session/token activity still show up in the dashboard.
+    collectRoots("SELECT DISTINCT key FROM stats WHERE key LIKE ?", ["project:%"], (row) =>
+      decodeProjectRootFromStatKey(row.key as string | undefined)
+    );
     collectRoots("SELECT value AS root FROM stats WHERE key LIKE ?", ["%:project_root"]);
     // New projects can appear in the graph before the stats row is written.
     collectRoots("SELECT DISTINCT project_root AS root FROM nodes WHERE project_root IS NOT NULL AND project_root <> ''");
@@ -196,17 +225,33 @@ async function listKnownProjects(
         return !normalized.startsWith(tempRoot);
       })
       .map((root) => {
-        let mtime = 0;
+        let lastSeen = 0;
         try {
-          mtime = statSync(root).mtimeMs;
+          const seen = store.getStat(projectStatKey(root, "last_seen"));
+          if (seen) lastSeen = Number(seen) || 0;
         } catch {
+          lastSeen = 0;
+        }
+
+        let lastMined = 0;
+        if (!lastSeen) {
           try {
             const lm = store.getStat(projectStatKey(root, "last_mined"));
-            if (lm) mtime = Number(lm) || 0;
+            if (lm) lastMined = Number(lm) || 0;
+          } catch {
+            lastMined = 0;
+          }
+        }
+
+        let mtime = lastSeen || lastMined;
+        if (!mtime) {
+          try {
+            mtime = statSync(root).mtimeMs;
           } catch {
             mtime = 0;
           }
         }
+
         const name = basename(root) || root;
         return {
           id: Buffer.from(root).toString("base64"),
@@ -1014,9 +1059,13 @@ async function handleTokens(
             // per-project failures are best-effort
           }
         }
-        // Sort sessions by ts desc and keep last 200
-        sessionsArr.sort((a, b) => (b.ts || 0) - (a.ts || 0));
-        const sessions = sessionsArr.slice(0, 200);
+        // Sort sessions chronologically so sparkline/time-series views read left-to-right.
+        sessionsArr.sort((a, b) => {
+          const ta = typeof a.ts === "number" ? a.ts : new Date(a.ts || 0).getTime();
+          const tb = typeof b.ts === "number" ? b.ts : new Date(b.ts || 0).getTime();
+          return ta - tb;
+        });
+        const sessions = sessionsArr.slice(-200);
         const avgReduction = totalNaiveTokens > 0 ? Math.round((totalSaved / totalNaiveTokens) * 1000) / 10 : 0;
         const estimatedCostSaved = Math.round((totalSaved / 1_000_000) * 3 * 100) / 100;
         json(res, 200, {

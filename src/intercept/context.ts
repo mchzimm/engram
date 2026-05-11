@@ -262,8 +262,9 @@ export function isContentUnsafeForIntercept(absPath: string): boolean {
 
 /**
  * Walk up from a file path to find the nearest directory containing
- * `.engram/graph.db`. Returns the project root (absolute path) or null if
- * no engram-initialized project contains this file.
+ * an `.engram/` project marker (legacy `.engram/graph.db` or the
+ * initialized `.engram/` directory). Returns the project root (absolute
+ * path) or null if no engram-initialized project contains this file.
  *
  * Cached per-invocation to avoid redundant stat() calls.
  *
@@ -292,9 +293,10 @@ export function findProjectRoot(filePath: string): string | null {
   let current = startDir;
   let depth = 0;
   while (depth < MAX_WALK_DEPTH) {
-    const candidate = join(current, ENGRAM_DIR, GRAPH_FILE);
+    const candidateDir = join(current, ENGRAM_DIR);
+    const candidateGraph = join(candidateDir, GRAPH_FILE);
     try {
-      if (existsSync(candidate)) {
+      if (existsSync(candidateDir) || existsSync(candidateGraph)) {
         projectRootCache.set(startDir, current);
         return current;
       }

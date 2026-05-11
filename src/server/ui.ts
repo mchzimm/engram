@@ -631,7 +631,11 @@ async function loadSessions() {
   if (!tokens) return;
 
   const sparkline = document.getElementById("sessions-sparkline");
-  if (sparkline) sparkline.innerHTML = renderSparkline([tokens.totalSaved ?? 0]);
+  if (sparkline) {
+    const sessionHistory = Array.isArray(tokens.sessions) ? tokens.sessions : [];
+    const savedSeries = sessionHistory.map((s) => Number(s.saved ?? 0));
+    sparkline.innerHTML = renderSparkline(savedSeries);
+  }
 
   // Build table with data from trusted source (our own DB)
   // Still using esc() for numbers to be defensive about type assumptions

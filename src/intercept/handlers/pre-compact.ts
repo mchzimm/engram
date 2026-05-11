@@ -14,7 +14,7 @@
  * compacted context as a system-reminder.
  */
 import { basename, resolve } from "node:path";
-import { godNodes, mistakes, stats } from "../../core.js";
+import { godNodes, mistakes, stats, getStore, projectStatKey } from "../../core.js";
 import { findProjectRoot, isValidCwd } from "../context.js";
 import { isHookDisabled, PASSTHROUGH, type HandlerResult } from "../safety.js";
 import { buildSessionContextResponse } from "../formatter.js";
@@ -91,6 +91,19 @@ export async function handlePreCompact(
 
   if (isHookDisabled(projectRoot)) return PASSTHROUGH;
 
+  // Record activity so the dashboard keeps this project near the top.
+  try {
+    const store = await getStore(projectRoot);
+    try {
+      store.setStat(projectStatKey(projectRoot, "project_root"), projectRoot);
+      store.setStat(projectStatKey(projectRoot, "last_seen"), String(Date.now()));
+    } finally {
+      store.close();
+    }
+  } catch {
+    // best-effort only
+  }
+
   try {
     const [gods, mistakeList, graphStats] = await Promise.all([
       godNodes(projectRoot, MAX_GOD_NODES_COMPACT).catch(() => []),
@@ -108,8 +121,6 @@ export async function handlePreCompact(
         totalQueryTokensSaved: 0,
       })),
     ]);
-
-    if (graphStats.nodes === 0 && gods.length === 0) return PASSTHROUGH;
 
     const projectName = basename(resolve(projectRoot));
 
