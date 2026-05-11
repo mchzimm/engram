@@ -182,6 +182,29 @@ describe("GraphStore", () => {
       expect(ids).not.toContain("placeholder");
       expect(ids).toContain("real");
     });
+
+    it("prefers extracted nodes over inferred memories when degrees tie", () => {
+      store.upsertNode(makeNode("inferredHub", {
+        label: "Inferred Hub",
+        kind: "pattern",
+        confidence: "INFERRED",
+      }));
+      store.upsertNode(makeNode("extractedHub", {
+        label: "Extracted Hub",
+        kind: "class",
+        confidence: "EXTRACTED",
+      }));
+      store.upsertNode(makeNode("n1", { kind: "concept" }));
+      store.upsertNode(makeNode("n2", { kind: "concept" }));
+      store.upsertEdge(makeEdge("inferredHub", "n1", { confidence: "INFERRED" }));
+      store.upsertEdge(makeEdge("inferredHub", "n2", { confidence: "INFERRED" }));
+      store.upsertEdge(makeEdge("extractedHub", "n1", { confidence: "EXTRACTED" }));
+      store.upsertEdge(makeEdge("extractedHub", "n2", { confidence: "EXTRACTED" }));
+
+      const gods = store.getGodNodes(2);
+      expect(gods[0].node.id).toBe("extractedHub");
+      expect(gods[1].node.id).toBe("inferredHub");
+    });
   });
 
   describe("stats", () => {

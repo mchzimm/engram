@@ -513,19 +513,29 @@ export class GraphStore {
     // triggered_by edges but isn't a "core abstraction" of the codebase.
     // Users want real code entities + decisions/patterns/mistakes here.
     const sql = projectRoot
-      ? `SELECT n.*, COUNT(*) as degree
+      ? `SELECT n.*, COUNT(*) as degree,
+              CASE n.confidence
+                WHEN 'EXTRACTED' THEN 2
+                WHEN 'INFERRED' THEN 1
+                ELSE 0
+              END AS confidence_rank
          FROM nodes n
          JOIN edges e ON e.source = n.id OR e.target = n.id
          WHERE n.kind NOT IN ('file', 'import', 'module', 'concept') AND n.project_root = ?
          GROUP BY n.id
-         ORDER BY degree DESC
+         ORDER BY confidence_rank DESC, degree DESC
          LIMIT ?`
-      : `SELECT n.*, COUNT(*) as degree
+      : `SELECT n.*, COUNT(*) as degree,
+              CASE n.confidence
+                WHEN 'EXTRACTED' THEN 2
+                WHEN 'INFERRED' THEN 1
+                ELSE 0
+              END AS confidence_rank
          FROM nodes n
          JOIN edges e ON e.source = n.id OR e.target = n.id
          WHERE n.kind NOT IN ('file', 'import', 'module', 'concept')
          GROUP BY n.id
-         ORDER BY degree DESC
+         ORDER BY confidence_rank DESC, degree DESC
          LIMIT ?`;
     const stmt = this.db.prepare(sql);
     if (projectRoot) stmt.bind([projectRoot, topN]);

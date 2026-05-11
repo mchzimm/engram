@@ -24,13 +24,12 @@ import { promisify } from "node:util";
 import { basename, dirname, join, resolve } from "node:path";
 
 const execFileAsync = promisify(execFile);
-import { godNodes, mistakes, stats, getStore, projectStatKey } from "../../core.js";
+import { godNodes, init, mistakes, stats, getStore, projectStatKey } from "../../core.js";
 import { isNoMatchPlaceholderText } from "../../miners/conclusions-miner.js";
 import { findProjectRoot, isValidCwd } from "../context.js";
 import { isHookDisabled, PASSTHROUGH, type HandlerResult } from "../safety.js";
 import { buildSessionContextResponse } from "../formatter.js";
 import { warmAllProviders } from "../../providers/resolver.js";
-import { onSessionStart } from "../auto-memory.js";
 
 export interface SessionStartHookPayload {
   readonly hook_event_name: "SessionStart" | string;
@@ -260,16 +259,25 @@ export async function handleSessionStart(
 
   // Mark the project as recently seen so the UI can surface it even if
   // the graph is still sparse or auto-memory is disabled.
+  let shouldPrimeMine = false;
   try {
     const store = await getStore(projectRoot);
     try {
       store.setStat(projectStatKey(projectRoot, "project_root"), projectRoot);
       store.setStat(projectStatKey(projectRoot, "last_seen"), String(Date.now()));
+      const lastMined = store.getStat(projectStatKey(projectRoot, "last_mined"));
+      shouldPrimeMine = !lastMined || Number(lastMined) <= 0;
     } finally {
       store.close();
     }
   } catch {
     // best-effort only
+  }
+
+  if (shouldPrimeMine) {
+    void init(projectRoot, { incremental: true }).catch(() => {
+      // best-effort background priming only
+    });
   }
 
   try {
@@ -329,14 +337,6 @@ export async function handleSessionStart(
       // Silent failure. If warmup fails, Read handlers will do live
       // resolution with per-provider timeouts and graceful degradation.
     });
-
-    // Aggressive auto: learn the session brief into memory across scopes.
-    // Fire-and-forget — must never block session start.
-    try {
-      void onSessionStart(projectRoot, fullText).catch(() => {});
-    } catch {
-      /* swallow */
-    }
 
     return buildSessionContextResponse("SessionStart", fullText);
   } catch {
