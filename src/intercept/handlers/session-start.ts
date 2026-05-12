@@ -25,6 +25,7 @@ import { basename, dirname, join, resolve } from "node:path";
 
 const execFileAsync = promisify(execFile);
 import { godNodes, init, mistakes, stats, getStore, projectStatKey } from "../../core.js";
+import { ContextCache, getContextCache } from "../../intelligence/cache.js";
 import { isNoMatchPlaceholderText } from "../../miners/conclusions-miner.js";
 import { findProjectRoot, isValidCwd } from "../context.js";
 import { isHookDisabled, PASSTHROUGH, type HandlerResult } from "../safety.js";
@@ -267,6 +268,11 @@ export async function handleSessionStart(
       store.setStat(projectStatKey(projectRoot, "last_seen"), String(Date.now()));
       const lastMined = store.getStat(projectStatKey(projectRoot, "last_mined"));
       shouldPrimeMine = !lastMined || Number(lastMined) <= 0;
+
+      // Warm the per-project file-context cache (best-effort). This primes
+      // hot files from prior sessions so repeated reads hit the LRU fast.
+      ContextCache.ensureTables(store);
+      getContextCache().warmHotFiles(store, projectRoot, 20);
     } finally {
       store.close();
     }

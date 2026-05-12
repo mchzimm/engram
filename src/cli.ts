@@ -2098,7 +2098,7 @@ cacheCmd
     try {
       ContextCache.ensureTables(store);
       const cache = getContextCache();
-      const s = cache.getStats(store);
+      const s = cache.getStats(store, pathResolve(opts.project));
 
       const hitRatePct = (s.hitRate * 100).toFixed(1);
       const totalOps = s.totalHits + s.totalMisses;
@@ -2139,8 +2139,8 @@ cacheCmd
     try {
       ContextCache.ensureTables(store);
       const cache = getContextCache();
-      const before = cache.getStats(store);
-      cache.clearAll(store);
+      const before = cache.getStats(store, pathResolve(opts.project));
+      cache.clearAll(store, pathResolve(opts.project));
       store.save();
       console.log(
         chalk.green(

@@ -37,69 +37,95 @@ describe("ContextCache", () => {
 
   describe("query cache", () => {
     it("returns null on cache miss", () => {
-      const result = cache.getQuery(store, "src/app.ts", testFile);
+      const result = cache.getQuery(store, testDir, "src/app.ts", testFile);
       expect(result).toBeNull();
     });
 
     it("caches and retrieves a context packet", () => {
-      cache.setQuery(store, "src/app.ts", testFile, "cached summary");
-      const result = cache.getQuery(store, "src/app.ts", testFile);
+      cache.setQuery(store, testDir, "src/app.ts", testFile, "cached summary");
+      const result = cache.getQuery(store, testDir, "src/app.ts", testFile);
       expect(result).toBe("cached summary");
     });
 
     it("invalidates on file modification", () => {
-      cache.setQuery(store, "src/app.ts", testFile, "old summary");
+      cache.setQuery(store, testDir, "src/app.ts", testFile, "old summary");
 
       // Modify the file
       writeFileSync(testFile, "export function updated() {}\n");
 
-      const result = cache.getQuery(store, "src/app.ts", testFile);
+      const result = cache.getQuery(store, testDir, "src/app.ts", testFile);
       expect(result).toBeNull();
     });
 
     it("invalidates when file is deleted", () => {
-      cache.setQuery(store, "src/app.ts", testFile, "cached");
+      cache.setQuery(store, testDir, "src/app.ts", testFile, "cached");
       rmSync(testFile);
 
-      const result = cache.getQuery(store, "src/app.ts", testFile);
+      const result = cache.getQuery(store, testDir, "src/app.ts", testFile);
       expect(result).toBeNull();
     });
 
     it("tracks hit counts", () => {
-      cache.setQuery(store, "src/app.ts", testFile, "summary");
-      cache.getQuery(store, "src/app.ts", testFile); // hit 1
-      cache.getQuery(store, "src/app.ts", testFile); // hit 2
+      cache.setQuery(store, testDir, "src/app.ts", testFile, "summary");
+      cache.getQuery(store, testDir, "src/app.ts", testFile); // hit 1
+      cache.getQuery(store, testDir, "src/app.ts", testFile); // hit 2
 
-      const stats = cache.getStats(store);
+      const stats = cache.getStats(store, testDir);
       expect(stats.queryHits).toBe(2);
       expect(stats.queryMisses).toBe(0);
+    });
+
+    it("keeps entries scoped to the project root", async () => {
+      const otherDir = join(tmpdir(), `engram-cache-other-${Date.now()}`);
+      mkdirSync(join(otherDir, ".engram"), { recursive: true });
+      mkdirSync(join(otherDir, "src"), { recursive: true });
+      const otherFile = join(otherDir, "src", "app.ts");
+      writeFileSync(otherFile, "export function other() {}\n");
+
+      const otherStore = await GraphStore.open(join(otherDir, ".engram", "graph.db"));
+      ContextCache.ensureTables(otherStore);
+      try {
+        cache.setQuery(store, testDir, "src/app.ts", testFile, "summary-a");
+        cache.setQuery(otherStore, otherDir, "src/app.ts", otherFile, "summary-b");
+
+        expect(cache.getQuery(store, testDir, "src/app.ts", testFile)).toBe("summary-a");
+        expect(cache.getQuery(otherStore, otherDir, "src/app.ts", otherFile)).toBe("summary-b");
+
+        const aStats = cache.getStats(store, testDir);
+        const bStats = cache.getStats(otherStore, otherDir);
+        expect(aStats.queryEntries).toBe(1);
+        expect(bStats.queryEntries).toBe(1);
+      } finally {
+        otherStore.close();
+        rmSync(otherDir, { recursive: true, force: true });
+      }
     });
   });
 
   describe("pattern cache", () => {
     it("returns null on cache miss", () => {
-      const result = cache.getPattern(store, "what calls hello?", 1);
+      const result = cache.getPattern(store, testDir, "what calls hello?", 1);
       expect(result).toBeNull();
     });
 
     it("caches and retrieves a pattern result", () => {
-      cache.setPattern(store, "what calls hello?", "hello is called by main()", 1);
-      const result = cache.getPattern(store, "what calls hello?", 1);
+      cache.setPattern(store, testDir, "what calls hello?", "hello is called by main()", 1);
+      const result = cache.getPattern(store, testDir, "what calls hello?", 1);
       expect(result).toBe("hello is called by main()");
     });
 
     it("invalidates when graph version changes", () => {
-      cache.setPattern(store, "what calls hello?", "old answer", 1);
-      const result = cache.getPattern(store, "what calls hello?", 2);
+      cache.setPattern(store, testDir, "what calls hello?", "old answer", 1);
+      const result = cache.getPattern(store, testDir, "what calls hello?", 2);
       expect(result).toBeNull();
     });
 
     it("tracks hit/miss counts", () => {
-      cache.getPattern(store, "miss1", 1); // miss
-      cache.setPattern(store, "hit1", "answer", 1);
-      cache.getPattern(store, "hit1", 1); // hit
+      cache.getPattern(store, testDir, "miss1", 1); // miss
+      cache.setPattern(store, testDir, "hit1", "answer", 1);
+      cache.getPattern(store, testDir, "hit1", 1); // hit
 
-      const stats = cache.getStats(store);
+      const stats = cache.getStats(store, testDir);
       expect(stats.patternHits).toBe(1);
       expect(stats.patternMisses).toBe(1);
     });
@@ -108,9 +134,10 @@ describe("ContextCache", () => {
   describe("hot file cache", () => {
     it("warms files from access frequency", () => {
       // Set up a cached file with hits
-      cache.setQuery(store, "src/app.ts", testFile, "hot summary");
+      cache.setQuery(store, testDir, "src/app.ts", testFile, "hot summary");
       // Simulate hits by updating hit_count directly
-      store.runSql("UPDATE query_cache SET hit_count = 10 WHERE key = ?", [
+      store.runSql("UPDATE query_cache SET hit_count = 10 WHERE project_root = ? AND key = ?", [
+        testDir,
         "src/app.ts",
       ]);
 
@@ -121,35 +148,35 @@ describe("ContextCache", () => {
       expect(warmed).toBe(1);
 
       // Should be in LRU now (no SQLite hit needed for subsequent reads)
-      const stats = freshCache.getStats(store);
+      const stats = freshCache.getStats(store, testDir);
       expect(stats.hotFileCount).toBe(1);
     });
   });
 
   describe("invalidation", () => {
     it("invalidateFile removes query cache entry", () => {
-      cache.setQuery(store, "src/app.ts", testFile, "summary");
-      cache.invalidateFile(store, "src/app.ts");
+      cache.setQuery(store, testDir, "src/app.ts", testFile, "summary");
+      cache.invalidateFile(store, testDir, "src/app.ts");
 
-      const result = cache.getQuery(store, "src/app.ts", testFile);
+      const result = cache.getQuery(store, testDir, "src/app.ts", testFile);
       expect(result).toBeNull();
     });
 
     it("invalidatePatterns clears all pattern entries", () => {
-      cache.setPattern(store, "q1", "a1", 1);
-      cache.setPattern(store, "q2", "a2", 1);
-      cache.invalidatePatterns(store);
+      cache.setPattern(store, testDir, "q1", "a1", 1);
+      cache.setPattern(store, testDir, "q2", "a2", 1);
+      cache.invalidatePatterns(store, testDir);
 
-      expect(cache.getPattern(store, "q1", 1)).toBeNull();
-      expect(cache.getPattern(store, "q2", 1)).toBeNull();
+      expect(cache.getPattern(store, testDir, "q1", 1)).toBeNull();
+      expect(cache.getPattern(store, testDir, "q2", 1)).toBeNull();
     });
 
     it("clearAll resets everything", () => {
-      cache.setQuery(store, "src/app.ts", testFile, "summary");
-      cache.setPattern(store, "q1", "a1", 1);
-      cache.clearAll(store);
+      cache.setQuery(store, testDir, "src/app.ts", testFile, "summary");
+      cache.setPattern(store, testDir, "q1", "a1", 1);
+      cache.clearAll(store, testDir);
 
-      const stats = cache.getStats(store);
+      const stats = cache.getStats(store, testDir);
       expect(stats.queryEntries).toBe(0);
       expect(stats.patternEntries).toBe(0);
       expect(stats.totalHits).toBe(0);
@@ -159,21 +186,21 @@ describe("ContextCache", () => {
 
   describe("stats", () => {
     it("reports correct entry counts", () => {
-      cache.setQuery(store, "src/app.ts", testFile, "s1");
-      cache.setPattern(store, "q1", "a1", 1);
-      cache.setPattern(store, "q2", "a2", 1);
+      cache.setQuery(store, testDir, "src/app.ts", testFile, "s1");
+      cache.setPattern(store, testDir, "q1", "a1", 1);
+      cache.setPattern(store, testDir, "q2", "a2", 1);
 
-      const stats = cache.getStats(store);
+      const stats = cache.getStats(store, testDir);
       expect(stats.queryEntries).toBe(1);
       expect(stats.patternEntries).toBe(2);
     });
 
     it("computes hit rate correctly", () => {
-      cache.setQuery(store, "src/app.ts", testFile, "s1");
-      cache.getQuery(store, "src/app.ts", testFile); // hit
-      cache.getQuery(store, "src/missing.ts", "/nonexistent"); // miss
+      cache.setQuery(store, testDir, "src/app.ts", testFile, "s1");
+      cache.getQuery(store, testDir, "src/app.ts", testFile); // hit
+      cache.getQuery(store, testDir, "src/missing.ts", "/nonexistent"); // miss
 
-      const stats = cache.getStats(store);
+      const stats = cache.getStats(store, testDir);
       expect(stats.hitRate).toBeCloseTo(0.5);
     });
   });

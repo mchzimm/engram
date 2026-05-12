@@ -1249,7 +1249,7 @@ async function handleCacheStats(
     try {
       ContextCache.ensureTables(store);
       const cache = getContextCache();
-      const cacheStats = cache.getStats(store);
+      const cacheStats = cache.getStats(store, projectRoot);
       json(res, 200, cacheStats);
     } finally {
       store.close();

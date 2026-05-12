@@ -15,7 +15,7 @@ export interface MigrationResult {
 }
 
 /** Current schema version — bump this when adding new migrations. */
-export const CURRENT_SCHEMA_VERSION = 10;
+export const CURRENT_SCHEMA_VERSION = 11;
 
 export interface RollbackResult {
   readonly fromVersion: number;
@@ -40,6 +40,7 @@ const DOWN_MIGRATIONS: Record<number, string> = {
   // CAN be dropped cleanly.
   8: `DROP INDEX IF EXISTS idx_nodes_validity;`,
   7: `DROP TABLE IF EXISTS query_cache; DROP TABLE IF EXISTS pattern_cache;`,
+  11: `DROP TABLE IF EXISTS query_cache; DROP TABLE IF EXISTS pattern_cache;`,
   6: `DROP TABLE IF EXISTS engram_config;`,
   5: `DROP TABLE IF EXISTS provider_cache;`,
   4: `SELECT 1;`, // hook-log is JSONL, no SQL rollback
@@ -291,6 +292,39 @@ CREATE INDEX IF NOT EXISTS idx_query_cache_file ON query_cache(file_path);`,
       // want to abort the whole migration run. The canonical_id column
       // still exists and the system will continue to operate.
     }
+  },
+
+  // v3.3.0: project-scoped memory caches. query_cache and pattern_cache are
+  // derived data, so we reset them and recreate the tables with project_root
+  // in the primary key instead of trying to preserve old cross-project rows.
+  11: (db: ExecDb) => {
+    try { db.exec("DROP TABLE IF EXISTS query_cache;"); } catch {}
+    try { db.exec("DROP TABLE IF EXISTS pattern_cache;"); } catch {}
+    db.exec(`
+CREATE TABLE IF NOT EXISTS query_cache (
+  project_root TEXT NOT NULL DEFAULT '',
+  key TEXT NOT NULL,
+  result TEXT NOT NULL,
+  file_path TEXT NOT NULL,
+  file_mtime REAL NOT NULL,
+  created_at INTEGER NOT NULL,
+  hit_count INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (project_root, key)
+);
+CREATE TABLE IF NOT EXISTS pattern_cache (
+  project_root TEXT NOT NULL DEFAULT '',
+  pattern TEXT NOT NULL,
+  result TEXT NOT NULL,
+  graph_version INTEGER NOT NULL,
+  hit_count INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (project_root, pattern)
+);
+CREATE INDEX IF NOT EXISTS idx_query_cache_project_root ON query_cache(project_root);
+CREATE INDEX IF NOT EXISTS idx_query_cache_file ON query_cache(project_root, file_path);
+CREATE INDEX IF NOT EXISTS idx_query_cache_project_hits ON query_cache(project_root, hit_count DESC);
+CREATE INDEX IF NOT EXISTS idx_pattern_cache_project_root ON pattern_cache(project_root);
+CREATE INDEX IF NOT EXISTS idx_pattern_cache_project_hits ON pattern_cache(project_root, hit_count DESC);
+    `);
   },
 };
 

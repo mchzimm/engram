@@ -3,7 +3,7 @@
  * (as hooks receive them from Claude Code) to graph queries.
  */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { init, getFileContext } from "../../src/core.js";
+import { init, getFileContext, getStore } from "../../src/core.js";
 import {
   mkdtempSync,
   rmSync,
@@ -13,6 +13,11 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import {
+  ContextCache,
+  getContextCache,
+  _resetContextCache,
+} from "../../src/intelligence/cache.js";
 
 describe("getFileContext", () => {
   let projectRoot: string;
@@ -47,9 +52,11 @@ export function verifyToken(token: string): boolean {
 `
     );
     await init(projectRoot);
+    _resetContextCache();
   });
 
   afterEach(() => {
+    _resetContextCache();
     rmSync(projectRoot, { recursive: true, force: true });
   });
 
@@ -69,6 +76,32 @@ export function verifyToken(token: string): boolean {
     // ceiling.
     expect(ctx.confidence).toBeGreaterThan(0.5);
     expect(ctx.confidence).toBeLessThanOrEqual(1.0);
+  });
+
+  it("caches repeated file contexts for the same project", async () => {
+    const cache = getContextCache();
+
+    const first = await getFileContext(projectRoot, authFile);
+    expect(first.found).toBe(true);
+
+    const statsStore = await getStore(projectRoot);
+    try {
+      ContextCache.ensureTables(statsStore);
+      const afterFirst = cache.getStats(statsStore, projectRoot);
+      expect(afterFirst.queryEntries).toBe(1);
+      expect(afterFirst.queryHits).toBe(0);
+      expect(afterFirst.queryMisses).toBe(1);
+
+      const second = await getFileContext(projectRoot, authFile);
+      expect(second.summary).toBe(first.summary);
+
+      const afterSecond = cache.getStats(statsStore, projectRoot);
+      expect(afterSecond.queryHits).toBe(1);
+      expect(afterSecond.queryMisses).toBe(1);
+      expect(afterSecond.hitRate).toBeCloseTo(0.5);
+    } finally {
+      statsStore.close();
+    }
   });
 
   it("returns empty result for a file with no graph coverage", async () => {

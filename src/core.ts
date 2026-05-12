@@ -2,7 +2,7 @@
  * Core engram operations — init, mine, query, stats.
  * This is the main API surface that CLI and MCP server both use.
  */
-import { join, resolve, relative } from "node:path";
+import { join, resolve, relative, dirname } from "node:path";
 import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { GraphStore } from "./graph/store.js";
@@ -13,6 +13,7 @@ import { mineGitHistory } from "./miners/git-miner.js";
 import { mineSessionHistory, learnFromSession } from "./miners/session-miner.js";
 import { mineSkills } from "./miners/skills-miner.js";
 import type { GraphStats } from "./graph/schema.js";
+import { getContextCache, ContextCache } from "./intelligence/cache.js";
 import { recordSession } from "./intelligence/token-tracker.js";
 
 const ENGRAM_DIR = ".engram";
@@ -360,7 +361,7 @@ export interface FileContextResult {
   readonly codeNodeCount: number;
   /** Average extraction confidence across the file's nodes. */
   readonly avgNodeConfidence: number;
-  /** Graph database mtime in ms since epoch (used for staleness checks). */
+  /** Graph freshness timestamp in ms since epoch (last mined / indexed). */
   readonly graphMtimeMs: number;
   /** File mtime in ms since epoch (null if the file does not exist). */
   readonly fileMtimeMs: number | null;
@@ -433,39 +434,67 @@ export async function getFileContext(
       return empty;
     }
 
-    // Capture the graph database mtime for staleness comparison. We use
-    // the db file's fs mtime rather than the stats table's `last_mined`
-    // key because the fs mtime is always up-to-date even if the stats
-    // table lags behind incremental updates.
+    // Capture the graph freshness timestamp for staleness comparison.
+    // We use the project-scoped `last_mined` stat instead of the DB file's
+    // mtime so cache writes do not self-invalidate the result.
     const dbPath = getDbPath(root);
-    let graphMtimeMs = 0;
     try {
-      graphMtimeMs = statSync(dbPath).mtimeMs;
+      statSync(dbPath);
     } catch {
       // No graph.db — nothing to do. Return empty (found: false).
       return empty;
     }
 
-    // Capture the file's mtime. If the file doesn't exist (common case
-    // for new files during an Edit), fileMtimeMs is null and we treat the
-    // summary as not-stale (the hook will still fall through because the
-    // graph will have zero nodes for a file that doesn't exist yet).
-    let fileMtimeMs: number | null = null;
-    try {
-      fileMtimeMs = statSync(abs).mtimeMs;
-    } catch {
-      fileMtimeMs = null;
-    }
-
-    const isStale = fileMtimeMs !== null && fileMtimeMs > graphMtimeMs;
-
     const store = await getStore(root);
     try {
+      ContextCache.ensureTables(store);
+      const cache = getContextCache();
+
+      let graphMtimeMs = 0;
+      try {
+        graphMtimeMs = Number(store.getStat(projectStatKey(root, "last_mined"))) || 0;
+      } catch {
+        graphMtimeMs = 0;
+      }
+
+      // Capture the file's mtime. If the file doesn't exist (common case
+      // for new files during an Edit), fileMtimeMs is null and we treat the
+      // summary as not-stale (the hook will still fall through because the
+      // graph will have zero nodes for a file that doesn't exist yet).
+      let fileMtimeMs: number | null = null;
+      try {
+        fileMtimeMs = statSync(abs).mtimeMs;
+      } catch {
+        fileMtimeMs = null;
+      }
+
+      const isStale = fileMtimeMs !== null && fileMtimeMs > graphMtimeMs;
+
+      const cached = cache.getQuery(store, root, relPath, abs, (result) => {
+        try {
+          const parsed = JSON.parse(result) as FileContextResult;
+          return (
+            parsed.graphMtimeMs === graphMtimeMs &&
+            parsed.fileMtimeMs === fileMtimeMs
+          );
+        } catch {
+          return false;
+        }
+      });
+      if (cached) {
+        try {
+          return JSON.parse(cached) as FileContextResult;
+        } catch {
+          cache.invalidateFile(store, root, relPath);
+        }
+      }
+
       const summary = renderFileStructure(store, relPath, undefined, root);
+      let result: FileContextResult;
       if (summary.codeNodeCount === 0) {
         // No code declarations → not worth a summary even if there's a
         // file metadata node. Treat as passthrough.
-        return {
+        result = {
           ...empty,
           nodeCount: summary.nodeCount,
           codeNodeCount: 0,
@@ -473,23 +502,27 @@ export async function getFileContext(
           fileMtimeMs,
           isStale,
         };
+      } else {
+        const coverageScore = Math.min(
+          summary.codeNodeCount / FILE_CONTEXT_COVERAGE_CEILING,
+          1
+        );
+        const confidence = coverageScore * summary.avgConfidence;
+        result = {
+          found: true,
+          confidence,
+          summary: summary.text,
+          nodeCount: summary.nodeCount,
+          codeNodeCount: summary.codeNodeCount,
+          avgNodeConfidence: summary.avgConfidence,
+          graphMtimeMs,
+          fileMtimeMs,
+          isStale,
+        };
       }
-      const coverageScore = Math.min(
-        summary.codeNodeCount / FILE_CONTEXT_COVERAGE_CEILING,
-        1
-      );
-      const confidence = coverageScore * summary.avgConfidence;
-      return {
-        found: true,
-        confidence,
-        summary: summary.text,
-        nodeCount: summary.nodeCount,
-        codeNodeCount: summary.codeNodeCount,
-        avgNodeConfidence: summary.avgConfidence,
-        graphMtimeMs,
-        fileMtimeMs,
-        isStale,
-      };
+
+      cache.setQuery(store, root, relPath, abs, JSON.stringify(result));
+      return result;
     } finally {
       store.close();
     }
@@ -757,6 +790,13 @@ export async function learn(
     if (edgesToAdd.length > 0) {
       // Upsert linking edges (no new nodes)
       store.bulkUpsert([], edgesToAdd, projectRoot, undefined, memoryScope);
+    }
+
+    try {
+      // Keep a stable graph freshness marker that is independent of cache writes.
+      store.setStat(projectStatKey(projectRoot, "last_mined"), String(Date.now()));
+    } catch {
+      // best-effort — cache invalidation will fall back to the next explicit reindex
     }
   } finally {
     store.close();
