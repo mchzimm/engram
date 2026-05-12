@@ -34,6 +34,11 @@ Quick example (requires Node 20+ and the engram HTTP server running):
      resolve context on-demand.
    - When the request completes and you have a session summary, call `POST /learn`
      with the summary text so engram persists the learning in its graph.
+   - If you are using the PI-side wrapper (`~/.pi/agent/extensions/engram-pi-wrapper`),
+     set `ENGRAM_LEARN_TIMEOUT_MS` higher on large graphs or busy servers. The wrapper
+     treats aborts as best-effort and will skip timeout noise quietly. This repo's
+     project-local PI config seeds `ENGRAM_LEARN_TIMEOUT_MS=30000` in
+     `.pi/extensions/00-engram-pi-wrapper-env.ts` for convenience.
 
 Security: all HTTP endpoints require an auth token (read from
 `~/.engram/http-server.token` or supplied via `Authorization: Bearer <token>`).
