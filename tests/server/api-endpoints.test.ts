@@ -166,6 +166,14 @@ describe("HTTP API — dashboard endpoints", () => {
       expect(body).toContain('id="tab-graph"');
     });
 
+    it("GET /ui places the graph legend in the graph header", () => {
+      const html = buildDashboardHtml();
+      expect(html).toContain('class="graph-head"');
+      expect(html).toContain('id="graph-legend"');
+      expect(html.indexOf('class="graph-head"')).toBeLessThan(html.indexOf('id="graph-canvas"'));
+      expect(html.indexOf('id="graph-legend"')).toBeLessThan(html.indexOf('id="graph-canvas"'));
+    });
+
     it("GET /ui/ (trailing slash) also serves dashboard", async () => {
       const r = await fetch(`http://127.0.0.1:${port}/ui/`, {
         headers: { Authorization: `Bearer ${TEST_TOKEN}` },
