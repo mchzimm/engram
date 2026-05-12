@@ -1259,6 +1259,24 @@ async function handleCacheStats(
   }
 }
 
+function enrichGraphNodeForUi(node: any, defaultProjectRoot = ""): any {
+  if (!node || typeof node !== "object") return node;
+  const metadata = { ...(node.metadata || {}) } as Record<string, unknown>;
+  const projectRoot = String(metadata.projectRoot || metadata.project_root || defaultProjectRoot || "");
+  const sourceFile = String(node.sourceFile || "");
+  if (projectRoot && sourceFile) {
+    const absPath = sourceFile.startsWith("/") ? sourceFile : join(projectRoot, sourceFile);
+    try {
+      const stat = statSync(absPath);
+      metadata.fileBirthtimeMs = Number.isFinite(stat.birthtimeMs) ? stat.birthtimeMs : (Number.isFinite(stat.ctimeMs) ? stat.ctimeMs : null);
+      metadata.fileMtimeMs = Number.isFinite(stat.mtimeMs) ? stat.mtimeMs : null;
+    } catch {
+      /* best effort */
+    }
+  }
+  return { ...node, metadata };
+}
+
 async function handleGraphNodes(
   req: IncomingMessage,
   res: ServerResponse,
@@ -1287,7 +1305,8 @@ async function handleGraphNodes(
           }
         });
         const paginated = filtered.slice(offset, offset + limit);
-        json(res, 200, { nodes: paginated, total: filtered.length });
+        const enriched = paginated.map((n) => enrichGraphNodeForUi(n, projectRoot));
+        json(res, 200, { nodes: enriched, total: filtered.length });
         return;
       }
 
@@ -1300,7 +1319,8 @@ async function handleGraphNodes(
       }
       const allNodes = store.getAllNodes(target as any);
       const paginated = allNodes.slice(offset, offset + limit);
-      json(res, 200, { nodes: paginated, total: allNodes.length });
+      const enriched = paginated.map((n) => enrichGraphNodeForUi(n, projectRoot));
+      json(res, 200, { nodes: enriched, total: allNodes.length });
     } finally {
       store.close();
     }
@@ -1368,7 +1388,11 @@ async function handleGraphGodNodes(
             return false;
           }
         });
-        json(res, 200, filtered.slice(0, 10));
+        const enriched = filtered.slice(0, 10).map((g: any) => ({
+          ...g,
+          node: enrichGraphNodeForUi(g.node, g.node?.metadata?.projectRoot || projectRoot),
+        }));
+        json(res, 200, enriched);
         return;
       }
 
@@ -1380,7 +1404,11 @@ async function handleGraphGodNodes(
         target = undefined;
       }
       const godNodes = store.getGodNodes(10, target as any);
-      json(res, 200, godNodes);
+      const enriched = godNodes.map((g: any) => ({
+        ...g,
+        node: enrichGraphNodeForUi(g.node, g.node?.metadata?.projectRoot || target || projectRoot),
+      }));
+      json(res, 200, enriched);
     } finally {
       store.close();
     }

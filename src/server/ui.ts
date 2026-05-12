@@ -236,6 +236,113 @@ td.dim { color: var(--text-dim); }
 
 #graph-canvas:active { cursor: grabbing; }
 
+.graph-focus main {
+  padding: 4px 16px 20px;
+  max-width: none;
+}
+
+.graph-focus #tab-graph {
+  margin-top: -6px;
+}
+
+.graph-focus #tab-graph .card {
+  min-height: clamp(680px, calc(100vh - 132px), 1200px);
+  padding: 12px 14px 14px;
+  display: flex;
+  flex-direction: column;
+}
+
+.graph-focus #graph-canvas {
+  flex: 1 1 auto;
+  height: clamp(560px, calc(100vh - 240px), 960px);
+  min-height: 560px;
+}
+
+.graph-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 8px;
+}
+
+.graph-head .subtext {
+  margin-top: 6px;
+  margin-bottom: 0;
+}
+
+#graph-legend {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: flex-start;
+  gap: 8px;
+  margin-left: auto;
+  min-width: 220px;
+  text-align: right;
+}
+
+#graph-legend .legend-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+#graph-legend .legend-row > div:last-child {
+  color: var(--text);
+  white-space: nowrap;
+}
+
+#graph-tooltip {
+  position: fixed;
+  z-index: 9998;
+  pointer-events: none;
+  display: none;
+  min-width: 220px;
+  max-width: 360px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(18, 18, 20, 0.96);
+  color: var(--text);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+#graph-tooltip.show { display: block; }
+
+#graph-tooltip .tooltip-title {
+  color: var(--accent);
+  font-weight: 600;
+  margin-bottom: 8px;
+  word-break: break-word;
+}
+
+#graph-tooltip .tooltip-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+#graph-tooltip .tooltip-label {
+  color: var(--text-dim);
+  flex: 0 0 auto;
+}
+
+#graph-tooltip .tooltip-value {
+  color: var(--text);
+  text-align: right;
+  flex: 1 1 auto;
+  word-break: break-word;
+}
+
 /* Toast notifications */
 .toast {
   position: fixed;
@@ -342,11 +449,16 @@ const HTML_BODY = `
 
     <section class="tab" id="tab-graph">
       <div class="card">
-        <h2>Knowledge Graph Visualization</h2>
-        <div class="subtext" style="margin-bottom: 12px;">Drag to pan &middot; Scroll to zoom &middot; Click nodes for details</div>
+        <div class="graph-head">
+          <div>
+            <h2>Knowledge Graph Visualization</h2>
+            <div class="subtext">Drag to pan &middot; Scroll to zoom &middot; Click nodes for details</div>
+          </div>
+          <div id="graph-legend"></div>
+        </div>
         <canvas id="graph-canvas"></canvas>
-        <div id="graph-legend" class="subtext" style="margin-top: 12px; display:flex; justify-content:center; gap:16px; align-items:center; flex-wrap:wrap; padding:6px 8px;"></div>
         <div id="graph-info" class="subtext" style="margin-top: 10px;"></div>
+        <div id="graph-tooltip" aria-hidden="true"></div>
       </div>
     </section>
 
@@ -387,11 +499,18 @@ function setText(id, value) {
 const tabs = document.querySelectorAll(".tab-btn");
 const panels = document.querySelectorAll(".tab");
 
+const syncGraphFocus = (enabled) => {
+  document.body.classList.toggle("graph-focus", enabled);
+};
+
+syncGraphFocus(!!document.querySelector('.tab-btn[data-tab="graph"].active'));
+
 tabs.forEach((btn) => {
   btn.addEventListener("click", () => {
     const target = btn.dataset.tab;
     tabs.forEach((b) => b.classList.toggle("active", b === btn));
     panels.forEach((p) => p.classList.toggle("active", p.id === "tab-" + target));
+    syncGraphFocus(target === "graph");
     if (target === "graph") loadGraph();
     if (target === "sessions") loadSessions();
     if (target === "files") loadFiles();
@@ -670,6 +789,8 @@ async function refreshGraph() {
   if (!canvas) return;
   // Replace canvas element so we don't accumulate event listeners/animation loops
   const fresh = canvas.cloneNode(true);
+  fresh.tabIndex = 0;
+  try { fresh.focus({ preventScroll: true }); } catch {}
   canvas.parentNode.replaceChild(fresh, canvas);
   const nodeList = nodes.nodes ?? [];
   // Fetch edges for the current node set in manageable chunks (best-effort).
@@ -712,7 +833,7 @@ async function refreshGraph() {
       await streamGraph(fresh, nodeList, godNodes ?? [], edges);
     } catch (e) {
       renderGraph(fresh, nodeList, godNodes ?? [], edges);
-      renderMemoryLegend(nodeList, edges, nodes.total ?? null);
+      renderMemoryLegend();
       {
         const tiers = window.__engram_graph_visibleTiers || {};
         const shellText = (tiers.project || tiers.god || tiers.child || tiers.edge)
@@ -723,7 +844,7 @@ async function refreshGraph() {
     }
   } else {
     renderGraph(fresh, nodeList, godNodes ?? [], edges);
-    renderMemoryLegend(nodeList, edges, nodes.total ?? null);
+    renderMemoryLegend();
     {
       const tiers = window.__engram_graph_visibleTiers || {};
       const shellText = (tiers.project || tiers.god || tiers.child || tiers.edge)
@@ -868,101 +989,24 @@ function renderLegendIcon(shape, color) {
   }
 }
 
-function renderMemoryLegend(nodes, edges, nodesTotal) {
+function renderMemoryLegend() {
   const el = document.getElementById("graph-legend");
   if (!el || typeof MEMORY_SCOPE_CONFIG === "undefined") return;
   const keys = ["project", "global", "entity"];
-
-  // Totals (best-effort) from provided nodes
-  const totalsNodes = { project: 0, global: 0, entity: 0 };
-  if (Array.isArray(nodes)) {
-    for (const n of nodes) {
-      try {
-        const meta = n.metadata || {};
-        const ms = (meta.memoryScope || meta.memory_scope) || "project";
-        if (ms === "global") totalsNodes.global++;
-        else if (ms === "entity") totalsNodes.entity++;
-        else totalsNodes.project++;
-      } catch {
-        totalsNodes.project++;
-      }
-    }
-  }
-
-  // Totals for edges (best-effort) — classify an edge by its endpoints' scope
-  const totalsEdges = { project: 0, global: 0, entity: 0, cross: 0 };
-  if (Array.isArray(edges)) {
-    // Build quick id->scope map from the provided nodes
-    const idToScope = new Map();
-    if (Array.isArray(nodes)) {
-      for (const n of nodes) {
-        const ms = (n.metadata && (n.metadata.memoryScope || n.metadata.memory_scope)) || 'project';
-        idToScope.set(n.id, ms);
-      }
-    }
-    for (const e of edges) {
-      const s = idToScope.get(e.source) || 'project';
-      const t = idToScope.get(e.target) || 'project';
-      if (s === t) totalsEdges[s] = (totalsEdges[s] || 0) + 1;
-      else totalsEdges.cross = (totalsEdges.cross || 0) + 1;
-    }
-  }
-
-  // Visible counts are provided by the running render (set on window)
-  const visibleIds = Array.isArray(window.__engram_graph_visibleNodes) ? window.__engram_graph_visibleNodes : [];
-  const visibleEdges = Array.isArray(window.__engram_graph_visibleEdges) ? window.__engram_graph_visibleEdges : [];
-
-  const idToScopeForVisible = new Map();
-  if (Array.isArray(nodes)) {
-    for (const n of nodes) {
-      const ms = (n.metadata && (n.metadata.memoryScope || n.metadata.memory_scope)) || 'project';
-      idToScopeForVisible.set(n.id, ms);
-    }
-  }
-
-  const visibleNodes = { project: 0, global: 0, entity: 0 };
-  for (const id of visibleIds) {
-    const ms = idToScopeForVisible.get(id) || 'project';
-    if (ms === 'global') visibleNodes.global++;
-    else if (ms === 'entity') visibleNodes.entity++;
-    else visibleNodes.project++;
-  }
-
-  const visibleEdgesCounts = { project: 0, global: 0, entity: 0, cross: 0 };
-  for (const e of visibleEdges) {
-    const s = idToScopeForVisible.get(e.source) || 'project';
-    const t = idToScopeForVisible.get(e.target) || 'project';
-    if (s === t) visibleEdgesCounts[s] = (visibleEdgesCounts[s] || 0) + 1;
-    else visibleEdgesCounts.cross = (visibleEdgesCounts.cross || 0) + 1;
-  }
-
-  // Render two rows: Total and Visible. Each row shows project/global/personal (nodes / edges)
-  const totalLabel = nodesTotal != null ? ('total: ' + nodesTotal) : '';
-  const rowBox = (label, nCount, eCount, accent) => {
-    const color = accent ? 'color: var(--accent);' : 'color: var(--text);';
-    return '<div style="display:flex;flex-direction:column;align-items:center;gap:6px;padding:6px 10px;border-radius:6px;min-width:120px;">' +
-      '<div style="font-family:var(--mono);font-size:12px;'+ color + '">' + esc(label) + '</div>' +
-      '<div style="font-family:var(--mono);font-size:12px;color:var(--text-dim);">' + esc(nCount) + ' nodes / ' + esc(eCount) + ' edges</div>' +
-      '</div>';
-  };
-
-  const projectBoxTotal = rowBox(MEMORY_SCOPE_CONFIG.project.label, totalsNodes.project || 0, totalsEdges.project || 0, false);
-  const globalBoxTotal = rowBox(MEMORY_SCOPE_CONFIG.global.label, totalsNodes.global || 0, totalsEdges.global || 0, false);
-  const personalBoxTotal = rowBox(MEMORY_SCOPE_CONFIG.entity.label, totalsNodes.entity || 0, totalsEdges.entity || 0, false);
-
-  const projectBoxVisible = rowBox(MEMORY_SCOPE_CONFIG.project.label, visibleNodes.project || 0, visibleEdgesCounts.project || 0, true);
-  const globalBoxVisible = rowBox(MEMORY_SCOPE_CONFIG.global.label, visibleNodes.global || 0, visibleEdgesCounts.global || 0, true);
-  const personalBoxVisible = rowBox(MEMORY_SCOPE_CONFIG.entity.label, visibleNodes.entity || 0, visibleEdgesCounts.entity || 0, true);
-
-  el.innerHTML = '<div style="display:flex;flex-direction:column;gap:8px;align-items:center;">' +
-    '<div style="font-family:var(--mono);font-size:12px;color:var(--text-dim);">' + esc(totalLabel) + '</div>' +
-    '<div style="font-family:var(--mono);font-size:11px;color:var(--text-dim);">fill = project color · outline = memory scope · diamond = leaf node</div>' +
-    '<div style="display:flex;gap:12px;justify-content:center;align-items:center;">' + projectBoxTotal + globalBoxTotal + personalBoxTotal + '</div>' +
-    '<div style="display:flex;gap:12px;justify-content:center;align-items:center;">' + projectBoxVisible + globalBoxVisible + personalBoxVisible + '</div>' +
-    '</div>';
+  el.innerHTML = keys
+    .map((k) => {
+      const cfg = MEMORY_SCOPE_CONFIG[k] || MEMORY_SCOPE_CONFIG.default;
+      const icon = renderLegendIcon(cfg.shape, cfg.color);
+      return '<div class="legend-row">' +
+        '<div>' + icon + '</div>' +
+        '<div>' + esc(cfg.label) + '</div>' +
+        '</div>';
+    })
+    .join("");
 }
 
 async function loadGraph() {
+  syncGraphFocus(true);
   return refreshGraph();
 }
 

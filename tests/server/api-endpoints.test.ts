@@ -134,19 +134,26 @@ describe("HTTP API — dashboard endpoints", () => {
     });
 
     it("GET /api/graph/nodes returns paginated nodes", async () => {
-      const { status, body } = await fetchJson(`http://127.0.0.1:${port}/api/graph/nodes?limit=5`);
+      const { status, body } = await fetchJson(`http://127.0.0.1:${port}/api/graph/nodes?limit=50`);
       expect(status).toBe(200);
       expect(body).toHaveProperty("nodes");
       expect(body).toHaveProperty("total");
-      const b = body as { nodes: unknown[]; total: number };
+      const b = body as { nodes: Array<{ sourceFile?: string; metadata?: Record<string, unknown> }>; total: number };
       expect(Array.isArray(b.nodes)).toBe(true);
-      expect(b.nodes.length).toBeLessThanOrEqual(5);
+      expect(b.nodes.length).toBeLessThanOrEqual(50);
+      const appNode = b.nodes.find((n) => typeof n.sourceFile === "string" && n.sourceFile.endsWith("app.ts"));
+      expect(appNode).toBeDefined();
+      expect(appNode?.metadata?.fileMtimeMs).toEqual(expect.any(Number));
+      expect(appNode?.metadata?.fileBirthtimeMs).toEqual(expect.any(Number));
     });
 
     it("GET /api/graph/god-nodes returns top nodes", async () => {
       const { status, body } = await fetchJson(`http://127.0.0.1:${port}/api/graph/god-nodes`);
       expect(status).toBe(200);
       expect(Array.isArray(body)).toBe(true);
+      const nodes = body as Array<{ node?: { sourceFile?: string; metadata?: Record<string, unknown> } }>;
+      const appNode = nodes.find((n) => typeof n.node?.sourceFile === "string" && n.node.sourceFile.endsWith("app.ts"));
+      expect(appNode?.node?.metadata?.fileMtimeMs).toEqual(expect.any(Number));
     });
   });
 
