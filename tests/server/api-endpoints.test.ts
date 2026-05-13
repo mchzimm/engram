@@ -8,7 +8,12 @@ import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createServer } from "node:http";
-import { init } from "../../src/core.js";
+import { init, getStore } from "../../src/core.js";
+import {
+  ContextCache,
+  getContextCache,
+  _resetContextCache,
+} from "../../src/intelligence/cache.js";
 import { buildDashboardHtml } from "../../src/server/ui.js";
 
 // Find a free port
@@ -37,17 +42,43 @@ async function fetchJson(url: string): Promise<{ status: number; body: unknown }
 
 describe("HTTP API — dashboard endpoints", () => {
   let testDir: string;
+  let otherDir: string;
   let port: number;
 
   beforeAll(async () => {
     process.env.ENGRAM_API_TOKEN = TEST_TOKEN;
     testDir = join(tmpdir(), `engram-api-${Date.now()}`);
+    process.env.ENGRAM_GLOBAL_DB_PATH = join(testDir, ".engram", "memory.db");
+    _resetContextCache();
+
     mkdirSync(join(testDir, "src"), { recursive: true });
     writeFileSync(
       join(testDir, "src", "app.ts"),
       "export function hello() { return 42; }\n"
     );
     await init(testDir);
+
+    // Seed a separate project so accumulative cache stats are non-zero even
+    // when the test project's own cache is empty.
+    otherDir = join(tmpdir(), `engram-api-cache-${Date.now()}`);
+    mkdirSync(join(otherDir, ".engram"), { recursive: true });
+    mkdirSync(join(otherDir, "src"), { recursive: true });
+    const otherFile = join(otherDir, "src", "other.ts");
+    writeFileSync(otherFile, "export const other = 123;\n");
+    const otherStore = await getStore(otherDir);
+    ContextCache.ensureTables(otherStore);
+    try {
+      const cache = getContextCache();
+      cache.setQuery(otherStore, otherDir, "src/other.ts", otherFile, "cached other summary");
+      cache.getQuery(otherStore, otherDir, "src/other.ts", otherFile);
+      cache.getQuery(otherStore, otherDir, "src/missing.ts", join(otherDir, "src", "missing.ts"));
+      cache.setPattern(otherStore, otherDir, "what does other export?", "other is exported from other.ts", 1);
+      cache.getPattern(otherStore, otherDir, "what does other export?", 1);
+      cache.getPattern(otherStore, otherDir, "missing pattern", 1);
+      cache.warmHotFiles(otherStore, otherDir, 20);
+    } finally {
+      otherStore.close();
+    }
 
     port = await freePort();
 
@@ -60,8 +91,11 @@ describe("HTTP API — dashboard endpoints", () => {
 
   afterAll(async () => {
     // Server is kept alive until process exit — test isolation via unique ports
+    _resetContextCache();
+    rmSync(otherDir, { recursive: true, force: true });
     rmSync(testDir, { recursive: true, force: true });
     delete process.env.ENGRAM_API_TOKEN;
+    delete process.env.ENGRAM_GLOBAL_DB_PATH;
   });
 
   describe("existing endpoints", () => {
@@ -118,19 +152,58 @@ describe("HTTP API — dashboard endpoints", () => {
       expect(body).toBeTypeOf("object");
     });
 
-    it("GET /api/cache/stats returns cache metrics", async () => {
+    it("GET /api/cache/stats returns current-project cache metrics", async () => {
       const { status, body } = await fetchJson(`http://127.0.0.1:${port}/api/cache/stats`);
       expect(status).toBe(200);
       const b = body as {
         queryEntries: number;
+        queryHits: number;
+        queryMisses: number;
         patternEntries: number;
-        hitRate: number;
+        patternHits: number;
+        patternMisses: number;
         hotFileCount: number;
+        totalHits: number;
+        totalMisses: number;
+        hitRate: number;
       };
-      expect(b.queryEntries).toBeTypeOf("number");
-      expect(b.patternEntries).toBeTypeOf("number");
-      expect(b.hitRate).toBeTypeOf("number");
-      expect(b.hotFileCount).toBeTypeOf("number");
+      expect(b.queryEntries).toBe(0);
+      expect(b.queryHits).toBe(0);
+      expect(b.queryMisses).toBe(0);
+      expect(b.patternEntries).toBe(0);
+      expect(b.patternHits).toBe(0);
+      expect(b.patternMisses).toBe(0);
+      expect(b.hotFileCount).toBe(0);
+      expect(b.totalHits).toBe(0);
+      expect(b.totalMisses).toBe(0);
+      expect(b.hitRate).toBe(0);
+    });
+
+    it("GET /api/cache/stats?scope=accumulative returns aggregated cache metrics", async () => {
+      const { status, body } = await fetchJson(`http://127.0.0.1:${port}/api/cache/stats?scope=accumulative`);
+      expect(status).toBe(200);
+      const b = body as {
+        queryEntries: number;
+        queryHits: number;
+        queryMisses: number;
+        patternEntries: number;
+        patternHits: number;
+        patternMisses: number;
+        hotFileCount: number;
+        totalHits: number;
+        totalMisses: number;
+        hitRate: number;
+      };
+      expect(b.queryEntries).toBeGreaterThan(0);
+      expect(b.queryHits).toBeGreaterThan(0);
+      expect(b.queryMisses).toBeGreaterThan(0);
+      expect(b.patternEntries).toBeGreaterThan(0);
+      expect(b.patternHits).toBeGreaterThan(0);
+      expect(b.patternMisses).toBeGreaterThan(0);
+      expect(b.hotFileCount).toBeGreaterThan(0);
+      expect(b.totalHits).toBeGreaterThan(0);
+      expect(b.totalMisses).toBeGreaterThan(0);
+      expect(b.hitRate).toBeGreaterThan(0);
     });
 
     it("GET /api/graph/nodes returns paginated nodes", async () => {

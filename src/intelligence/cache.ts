@@ -365,7 +365,14 @@ export class ContextCache {
 
   // ─── Stats ──────────────────────────────────────────────────────
 
-  getStats(store: GraphStore, projectRoot: string): CacheStats {
+  getStats(store: GraphStore, projectRoot?: string): CacheStats {
+    if (projectRoot === undefined) {
+      return this.getAggregateStats(store);
+    }
+    return this.getProjectStats(store, projectRoot);
+  }
+
+  private getProjectStats(store: GraphStore, projectRoot: string): CacheStats {
     const root = this.normalizeProjectRoot(projectRoot);
     let queryEntries = 0;
     let patternEntries = 0;
@@ -422,6 +429,79 @@ export class ContextCache {
       patternHits,
       patternMisses: counters.patternMisses,
       hotFileCount: this.hotFilesFor(root).size,
+      totalHits,
+      totalMisses,
+      hitRate: total > 0 ? totalHits / total : 0,
+    };
+  }
+
+  private getAggregateStats(store: GraphStore): CacheStats {
+    let queryEntries = 0;
+    let patternEntries = 0;
+    let persistedQueryHits = 0;
+    let persistedPatternHits = 0;
+
+    try {
+      const stmt1 = store.prepare(
+        "SELECT COUNT(*) as cnt, COALESCE(SUM(hit_count), 0) as hits FROM query_cache"
+      );
+      if (stmt1.step()) {
+        const row = stmt1.getAsObject();
+        queryEntries = row.cnt as number;
+        persistedQueryHits = row.hits as number;
+      }
+      stmt1.free();
+    } catch {
+      // Table may not exist yet.
+    }
+
+    try {
+      const stmt2 = store.prepare(
+        "SELECT COUNT(*) as cnt, COALESCE(SUM(hit_count), 0) as hits FROM pattern_cache"
+      );
+      if (stmt2.step()) {
+        const row = stmt2.getAsObject();
+        patternEntries = row.cnt as number;
+        persistedPatternHits = row.hits as number;
+      }
+      stmt2.free();
+    } catch {
+      // Table may not exist yet.
+    }
+
+    let queryHits = 0;
+    let queryMisses = 0;
+    let patternHits = 0;
+    let patternMisses = 0;
+    let hotFileCount = 0;
+    for (const counters of this.counters.values()) {
+      queryHits += counters.queryHits;
+      queryMisses += counters.queryMisses;
+      patternHits += counters.patternHits;
+      patternMisses += counters.patternMisses;
+    }
+    for (const files of this.hotFiles.values()) {
+      hotFileCount += files.size;
+    }
+
+    // Merge in-process counters with persisted totals. SQLite `hit_count`
+    // accumulates across sessions; we prefer the larger of the two to show
+    // cross-session activity without double-counting the current session.
+    queryHits = Math.max(queryHits, persistedQueryHits);
+    patternHits = Math.max(patternHits, persistedPatternHits);
+
+    const totalHits = queryHits + patternHits;
+    const totalMisses = queryMisses + patternMisses;
+    const total = totalHits + totalMisses;
+
+    return {
+      queryEntries,
+      queryHits,
+      queryMisses,
+      patternEntries,
+      patternHits,
+      patternMisses,
+      hotFileCount,
       totalHits,
       totalMisses,
       hitRate: total > 0 ? totalHits / total : 0,

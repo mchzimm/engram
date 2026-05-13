@@ -1240,16 +1240,25 @@ function handleProvidersHealth(
 }
 
 async function handleCacheStats(
-  _req: IncomingMessage,
+  req: IncomingMessage,
   res: ServerResponse,
   projectRoot: string
 ): Promise<void> {
   try {
+    const url = parseUrl(req);
+    const projectId = url.searchParams.get("projectId");
+    const scope = url.searchParams.get("scope");
+    const targetProjectRoot = projectId
+      ? decodeProjectId(projectId) ?? projectRoot
+      : scope === "accumulative"
+        ? undefined
+        : projectRoot;
+
     const store = await getStore(projectRoot);
     try {
       ContextCache.ensureTables(store);
       const cache = getContextCache();
-      const cacheStats = cache.getStats(store, projectRoot);
+      const cacheStats = cache.getStats(store, targetProjectRoot);
       json(res, 200, cacheStats);
     } finally {
       store.close();
