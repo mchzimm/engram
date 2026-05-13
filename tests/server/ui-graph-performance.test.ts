@@ -165,5 +165,19 @@ describe("graph streaming performance", () => {
     expect(Number(second.perf.lastStreamNodes)).toBe(nodes.length);
     expect(Number(second.perf.lastVisibleEdges)).toBe(edges.length);
     expect(Number(second.perf.lastBatchSize)).toBeGreaterThanOrEqual(1);
+
+    const bounds = canvas.getBoundingClientRect();
+    const layoutScale = Number(context.window.__engram_graph_layoutScale ?? 0);
+    const layoutState = context.window.__engram_graph_layoutState;
+    const positions = layoutState?.positions && typeof layoutState.positions.values === "function"
+      ? Array.from(layoutState.positions.values())
+      : [];
+    expect(layoutScale).toBeGreaterThan(1);
+    expect(positions.some((n: { x?: number; y?: number }) => {
+      const x = Number(n.x);
+      const y = Number(n.y);
+      return x < 0 || y < 0 || x > bounds.width || y > bounds.height;
+    })).toBe(true);
+    expect(Number(context.window.__engram_graph_viewState?.zoom ?? 0)).toBeLessThan(1);
   });
 });
