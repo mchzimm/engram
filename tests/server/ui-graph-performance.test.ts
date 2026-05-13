@@ -168,16 +168,23 @@ describe("graph streaming performance", () => {
 
     const bounds = canvas.getBoundingClientRect();
     const layoutScale = Number(context.window.__engram_graph_layoutScale ?? 0);
-    const layoutState = context.window.__engram_graph_layoutState;
-    const positions = layoutState?.positions && typeof layoutState.positions.values === "function"
-      ? Array.from(layoutState.positions.values())
+    const layoutMode = String(context.window.__engram_graph_layoutMode ?? "");
+    const layoutNodes = Array.isArray(context.window.__engram_graph_layoutNodes)
+      ? context.window.__engram_graph_layoutNodes
       : [];
     expect(layoutScale).toBeGreaterThan(1);
-    expect(positions.some((n: { x?: number; y?: number }) => {
+    expect(layoutMode).toBe("settle-first");
+    expect(layoutNodes.length).toBeGreaterThan(0);
+    expect(layoutNodes.some((n: { x?: number; y?: number }) => {
       const x = Number(n.x);
       const y = Number(n.y);
       return x < 0 || y < 0 || x > bounds.width || y > bounds.height;
     })).toBe(true);
+    const xs = layoutNodes.map((n: { x?: number }) => Number(n.x)).filter((n: number) => Number.isFinite(n));
+    const ys = layoutNodes.map((n: { y?: number }) => Number(n.y)).filter((n: number) => Number.isFinite(n));
+    const width = Math.max(...xs) - Math.min(...xs);
+    const height = Math.max(...ys) - Math.min(...ys);
+    expect(Math.max(width, height) / Math.max(1, Math.min(width, height))).toBeLessThan(1.25);
     expect(Number(context.window.__engram_graph_viewState?.zoom ?? 0)).toBeLessThan(1);
   });
 });
