@@ -39,6 +39,15 @@ function isHiddenKeyword(node: GraphNode): boolean {
   return meta?.subkind === "keyword";
 }
 
+function bumpQueryCounts(store: GraphStore, nodes: GraphNode[]): void {
+  const seen = new Set<string>();
+  for (const node of nodes) {
+    if (!node || seen.has(node.id) || isHiddenKeyword(node)) continue;
+    seen.add(node.id);
+    store.incrementQueryCount(node.id);
+  }
+}
+
 const CHARS_PER_TOKEN = 4;
 
 interface TraversalResult {
@@ -124,9 +133,6 @@ export function queryGraph(
     return { nodes: [], edges: [], text: "No matching nodes found.", estimatedTokens: 5 };
   }
 
-  // Increment query counts for matched nodes
-  for (const n of startNodes) store.incrementQueryCount(n.id);
-
   const visited = new Set<string>(startNodes.map((n) => n.id));
   const collectedEdges: GraphEdge[] = [];
 
@@ -189,11 +195,14 @@ export function queryGraph(
     if (node) resultNodes.push(node);
   }
 
+  bumpQueryCounts(store, resultNodes);
+  const refreshedNodes = resultNodes.map((n) => store.getNode(n.id) ?? n);
+
   // Render as text with token budget
-  const text = renderSubgraph(resultNodes, collectedEdges, tokenBudget);
+  const text = renderSubgraph(refreshedNodes, collectedEdges, tokenBudget);
   const estimatedTokens = Math.ceil(text.length / CHARS_PER_TOKEN);
 
-  return { nodes: resultNodes, edges: collectedEdges, text, estimatedTokens };
+  return { nodes: refreshedNodes, edges: collectedEdges, text, estimatedTokens };
 }
 
 export function shortestPath(
@@ -242,9 +251,11 @@ export function shortestPath(
           if (edge) pathEdges.push(edge);
         }
       }
-      const text = renderPath(pathNodes, pathEdges);
+      bumpQueryCounts(store, pathNodes);
+      const refreshedPathNodes = pathNodes.map((n) => store.getNode(n.id) ?? n);
+      const text = renderPath(refreshedPathNodes, pathEdges);
       return {
-        nodes: pathNodes,
+        nodes: refreshedPathNodes,
         edges: pathEdges,
         text,
         estimatedTokens: Math.ceil(text.length / CHARS_PER_TOKEN),
