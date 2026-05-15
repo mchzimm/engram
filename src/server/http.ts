@@ -40,7 +40,7 @@ import {
   type TokenInfo,
 } from "./auth.js";
 import { extractTextFromFile } from "../miners/pdf-miner.js";
-import { discoverAnthropicMemoryProjects } from "../providers/anthropic-memory.js";
+import { discoverProjectsWithMemories } from "./project-discovery.js";
 
 // Read version — try both paths (works from src/ in dev and dist/ when built).
 import { createRequire } from "node:module";
@@ -221,9 +221,10 @@ async function listKnownProjects(
     collectRoots("SELECT DISTINCT project_root AS root FROM nodes WHERE project_root IS NOT NULL AND project_root <> ''");
     collectRoots("SELECT DISTINCT project_root AS root FROM edges WHERE project_root IS NOT NULL AND project_root <> ''");
 
-    // Projects with Claude Code Auto-Memory indexes should also surface in the selector,
-    // even if engram hasn't yet mined their graph or recorded session stats.
-    for (const project of discoverAnthropicMemoryProjects()) {
+    // Projects that already have local memory artifacts under the workspace tree
+    // should surface in the selector, even if engram hasn't yet mined their graph
+    // or recorded session stats.
+    for (const project of discoverProjectsWithMemories()) {
       addRoot(project.root, project.lastModified);
     }
 

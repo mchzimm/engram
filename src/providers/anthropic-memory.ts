@@ -28,7 +28,7 @@
  *
  * Tier 1 (synchronous file read). Safe to run on every Read.
  */
-import { existsSync, readFileSync, statSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import type {
@@ -62,62 +62,6 @@ export function encodeProjectPath(absPath: string): string {
 export function getMemoryIndexPath(projectRoot: string): string {
   const encoded = encodeProjectPath(projectRoot);
   return join(homedir(), ".claude", "projects", encoded, "memory", "MEMORY.md");
-}
-
-const PROJECTS_DIR_ENV = "ENGRAM_ANTHROPIC_PROJECTS_DIR";
-
-export interface DiscoveredAnthropicProject {
-  readonly root: string;
-  readonly lastModified: number;
-}
-
-function decodeProjectPath(encodedPath: string): string | null {
-  const trimmed = encodedPath.trim();
-  if (!trimmed) return null;
-
-  const decoded = trimmed.replace(/-/g, "/");
-  if (!decoded) return null;
-
-  return decoded.startsWith("/") || /^[A-Za-z]:\//.test(decoded) ? decoded : `/${decoded}`;
-}
-
-/**
- * Discover Claude Code projects that already have a MEMORY.md index.
- * Best-effort only: malformed directories are skipped and the scan never throws.
- */
-export function discoverAnthropicMemoryProjects(
-  projectsDir = process.env[PROJECTS_DIR_ENV] || join(homedir(), ".claude", "projects")
-): DiscoveredAnthropicProject[] {
-  try {
-    if (!existsSync(projectsDir)) return [];
-
-    const discovered: DiscoveredAnthropicProject[] = [];
-    for (const entry of readdirSync(projectsDir, { withFileTypes: true })) {
-      if (!entry.isDirectory()) continue;
-      const encoded = entry.name.trim();
-      if (!encoded) continue;
-
-      const memoryPath = join(projectsDir, encoded, "memory", "MEMORY.md");
-      if (!existsSync(memoryPath)) continue;
-
-      const root = decodeProjectPath(encoded);
-      if (!root) continue;
-
-      let lastModified = 0;
-      try {
-        lastModified = statSync(memoryPath).mtimeMs;
-      } catch {
-        lastModified = 0;
-      }
-
-      discovered.push({ root, lastModified });
-    }
-
-    discovered.sort((a, b) => b.lastModified - a.lastModified || a.root.localeCompare(b.root));
-    return discovered;
-  } catch {
-    return [];
-  }
 }
 
 /** Parsed index entry — the title, linked filename, and hook description. */
