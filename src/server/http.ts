@@ -23,7 +23,7 @@
  */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { writeFileSync, unlinkSync, mkdirSync, existsSync, statSync, appendFileSync } from "node:fs"; import { homedir, tmpdir } from "node:os";
-import { join, resolve, relative, basename } from "node:path";
+import { join, resolve, relative, basename, sep } from "node:path";
 import { query, stats, learn, init, getStore, projectStatKey } from "../core.js";
 import { readHookLog, logHookEvent } from "../intelligence/hook-log.js";
 import { summarizeHookLog } from "../intercept/stats.js";
@@ -231,10 +231,24 @@ async function listKnownProjects(
     for (const root of fallbackRoots) addRoot(root);
 
     const tempRoot = resolve(tmpdir());
+    const workspaceRoot = resolve(process.env.ENGRAM_PROJECTS_ROOT_DIR || join(homedir(), "prjs"));
+    const fallbackResolvedRoots = new Set(fallbackRoots.map((root) => resolve(root)));
     const projects = [...roots]
       .filter((root) => {
         const normalized = resolve(root);
-        return !normalized.startsWith(tempRoot);
+
+        let isDirectory = false;
+        try {
+          isDirectory = statSync(normalized).isDirectory();
+        } catch {
+          isDirectory = false;
+        }
+        if (!isDirectory) return false;
+
+        if (fallbackResolvedRoots.has(normalized)) return true;
+        if (normalized === workspaceRoot || normalized.startsWith(workspaceRoot + sep)) return true;
+        if (normalized.startsWith(tempRoot)) return false;
+        return false;
       })
       .map((root) => {
         let lastSeen = 0;

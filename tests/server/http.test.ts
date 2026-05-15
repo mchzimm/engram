@@ -8,7 +8,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createServer } from "node:http";
 import { join } from "node:path";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir, homedir } from "node:os";
 import { createHttpServer } from "../../src/server/http.js";
 import { getStore } from "../../src/core.js";
@@ -67,7 +67,6 @@ beforeAll(async () => {
   process.env.ENGRAM_PROJECTS_ROOT_DIR = WORKSPACE_ROOT;
   mkdirSync(TEST_PROJECT, { recursive: true });
   mkdirSync(WORKSPACE_PROJECT_MEMORY_DIR, { recursive: true });
-  writeFileSync(join(WORKSPACE_PROJECT_MEMORY_DIR, "graph.db"), "memory-db");
   port = await getFreePort();
   baseUrl = `http://127.0.0.1:${port}`;
   await createHttpServer(TEST_PROJECT, port);
@@ -130,20 +129,19 @@ describe("GET /stats", () => {
 // project discovery + accumulative aggregates
 // ---------------------------------------------------------------------------
 
-const DISCOVERY_ROOT = join(process.cwd(), `.tmp-engram-http-project-${Date.now()}`);
 const WORKSPACE_ROOT = mkdtempSync(join(homedir(), "prjs", "engram-workspace-root-"));
 const WORKSPACE_PROJECT_ROOT = join(WORKSPACE_ROOT, "pi-notes-project");
 const WORKSPACE_PROJECT_MEMORY_DIR = join(WORKSPACE_PROJECT_ROOT, ".engram");
 
-async function seedDiscoveryProject(): Promise<void> {
-  mkdirSync(join(DISCOVERY_ROOT, ".engram"), { recursive: true });
-  const store = await getStore(DISCOVERY_ROOT);
+async function seedWorkspaceProject(): Promise<void> {
+  mkdirSync(WORKSPACE_PROJECT_MEMORY_DIR, { recursive: true });
+  const store = await getStore(WORKSPACE_PROJECT_ROOT);
   try {
-    recordSession(store, 1800, 600, DISCOVERY_ROOT);
+    recordSession(store, 1800, 600, WORKSPACE_PROJECT_ROOT);
   } finally {
     store.close();
   }
-  logHookEvent(DISCOVERY_ROOT, {
+  logHookEvent(WORKSPACE_PROJECT_ROOT, {
     event: "PreToolUse",
     tool: "Read",
     decision: "deny",
@@ -155,18 +153,11 @@ async function seedDiscoveryProject(): Promise<void> {
 
 describe("dashboard project discovery", () => {
   beforeAll(async () => {
-    await seedDiscoveryProject();
+    await seedWorkspaceProject();
   });
 
   afterAll(() => {
-    rmSync(DISCOVERY_ROOT, { recursive: true, force: true });
-  });
-
-  it("discovers projects from namespaced session stats", async () => {
-    const { status, body } = await get("/api/scopes");
-    expect(status).toBe(200);
-    const projects = (body as { projects: Array<{ root: string }> }).projects;
-    expect(projects.some((p) => p.root === DISCOVERY_ROOT)).toBe(true);
+    rmSync(WORKSPACE_ROOT, { recursive: true, force: true });
   });
 
   it("discovers projects from local workspace memory artifacts", async () => {
@@ -174,6 +165,26 @@ describe("dashboard project discovery", () => {
     expect(status).toBe(200);
     const projects = (body as { projects: Array<{ root: string }> }).projects;
     expect(projects.some((p) => p.root === WORKSPACE_PROJECT_ROOT)).toBe(true);
+  });
+
+  it("ignores stale temp project roots outside the workspace tree", async () => {
+    const tempRoot = join(process.cwd(), `.tmp-engram-http-project-${Date.now()}`);
+    mkdirSync(join(tempRoot, ".engram"), { recursive: true });
+    const store = await getStore(tempRoot);
+    try {
+      recordSession(store, 900, 250, tempRoot);
+    } finally {
+      store.close();
+    }
+
+    try {
+      const { status, body } = await get("/api/scopes");
+      expect(status).toBe(200);
+      const projects = (body as { projects: Array<{ root: string }> }).projects;
+      expect(projects.some((p) => p.root === tempRoot)).toBe(false);
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
   });
 
   it("aggregates token savings across discovered projects", async () => {
