@@ -8,12 +8,13 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createServer } from "node:http";
 import { join } from "node:path";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { createHttpServer } from "../../src/server/http.js";
 import { getStore } from "../../src/core.js";
 import { recordSession } from "../../src/intelligence/token-tracker.js";
 import { logHookEvent } from "../../src/intelligence/hook-log.js";
+import { encodeProjectPath } from "../../src/providers/anthropic-memory.js";
 
 const TEST_PROJECT = mkdtempSync(join(tmpdir(), "engram-http-test-"));
 const TEST_TOKEN = "test-token-abcdef0123456789abcdef0123456789";
@@ -126,6 +127,8 @@ describe("GET /stats", () => {
 // ---------------------------------------------------------------------------
 
 const DISCOVERY_ROOT = join(process.cwd(), `.tmp-engram-http-project-${Date.now()}`);
+const ANTHROPIC_MEMORY_PROJECT_ROOT = join(process.cwd(), `.tmpengramanthropicproject${Date.now()}`);
+const ANTHROPIC_PROJECTS_DIR = mkdtempSync(join(tmpdir(), "engram-claude-projects-"));
 
 async function seedDiscoveryProject(): Promise<void> {
   mkdirSync(join(DISCOVERY_ROOT, ".engram"), { recursive: true });
@@ -178,6 +181,33 @@ describe("dashboard project discovery", () => {
     expect(summary.byDecision?.deny ?? 0).toBeGreaterThan(0);
     expect(summary.readDenyCount ?? 0).toBeGreaterThan(0);
     expect(summary.estimatedTokensSaved ?? 0).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Anthropic Auto-Memory discovery
+// ---------------------------------------------------------------------------
+
+describe("dashboard Anthropic memory discovery", () => {
+  beforeAll(() => {
+    process.env.ENGRAM_ANTHROPIC_PROJECTS_DIR = ANTHROPIC_PROJECTS_DIR;
+    mkdirSync(ANTHROPIC_MEMORY_PROJECT_ROOT, { recursive: true });
+    const memoryDir = join(ANTHROPIC_PROJECTS_DIR, encodeProjectPath(ANTHROPIC_MEMORY_PROJECT_ROOT), "memory");
+    mkdirSync(memoryDir, { recursive: true });
+    writeFileSync(join(memoryDir, "MEMORY.md"), "- [Project memory](memory.md) — exists");
+  });
+
+  afterAll(() => {
+    delete process.env.ENGRAM_ANTHROPIC_PROJECTS_DIR;
+    rmSync(ANTHROPIC_PROJECTS_DIR, { recursive: true, force: true });
+    rmSync(ANTHROPIC_MEMORY_PROJECT_ROOT, { recursive: true, force: true });
+  });
+
+  it("surfaces projects that only exist via Claude memory indexes", async () => {
+    const { status, body } = await get("/api/scopes");
+    expect(status).toBe(200);
+    const projects = (body as { projects: Array<{ root: string }> }).projects;
+    expect(projects.some((p) => p.root === ANTHROPIC_MEMORY_PROJECT_ROOT)).toBe(true);
   });
 });
 

@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { tmpdir, homedir } from "node:os";
 import {
   anthropicMemoryProvider,
+  discoverAnthropicMemoryProjects,
   encodeProjectPath,
   getMemoryIndexPath,
   parseMemoryIndex,
@@ -104,6 +105,28 @@ Some prose.
     const out = parseMemoryIndex("- [Title Only](x.md)");
     expect(out).toHaveLength(1);
     expect(out[0].description).toBe("");
+  });
+});
+
+describe("discoverAnthropicMemoryProjects", () => {
+  it("finds project roots that have MEMORY.md indexes", () => {
+    const projectsDir = mkdtempSync(join(tmpdir(), "engram-claude-projects-"));
+    const projectRoot = mkdtempSync(join(tmpdir(), "engrammemoryproject"));
+    const encoded = encodeProjectPath(projectRoot);
+    const memoryDir = join(projectsDir, encoded, "memory");
+
+    try {
+      mkdirSync(memoryDir, { recursive: true });
+      writeFileSync(join(memoryDir, "MEMORY.md"), "- [Known project](note.md) — exists");
+
+      const projects = discoverAnthropicMemoryProjects(projectsDir);
+      expect(projects).toHaveLength(1);
+      expect(projects[0].root).toBe(projectRoot);
+      expect(projects[0].lastModified).toBeGreaterThan(0);
+    } finally {
+      rmSync(projectsDir, { recursive: true, force: true });
+      rmSync(projectRoot, { recursive: true, force: true });
+    }
   });
 });
 

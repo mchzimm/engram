@@ -40,6 +40,7 @@ import {
   type TokenInfo,
 } from "./auth.js";
 import { extractTextFromFile } from "../miners/pdf-miner.js";
+import { discoverAnthropicMemoryProjects } from "../providers/anthropic-memory.js";
 
 // Read version — try both paths (works from src/ in dev and dist/ when built).
 import { createRequire } from "node:module";
@@ -169,12 +170,16 @@ async function listKnownProjects(
 ): Promise<Array<{ id: string; root: string; name: string; lastModified: number }>> {
   try {
     const roots = new Set<string>();
+    const discoveredLastModified = new Map<string, number>();
 
-    const addRoot = (candidate: unknown): void => {
+    const addRoot = (candidate: unknown, lastModified = 0): void => {
       if (typeof candidate !== "string") return;
       const root = candidate.trim();
       if (!root) return;
       roots.add(root);
+      if (lastModified > 0) {
+        discoveredLastModified.set(root, Math.max(discoveredLastModified.get(root) ?? 0, lastModified));
+      }
     };
 
     const collectRoots = (
@@ -216,6 +221,12 @@ async function listKnownProjects(
     collectRoots("SELECT DISTINCT project_root AS root FROM nodes WHERE project_root IS NOT NULL AND project_root <> ''");
     collectRoots("SELECT DISTINCT project_root AS root FROM edges WHERE project_root IS NOT NULL AND project_root <> ''");
 
+    // Projects with Claude Code Auto-Memory indexes should also surface in the selector,
+    // even if engram hasn't yet mined their graph or recorded session stats.
+    for (const project of discoverAnthropicMemoryProjects()) {
+      addRoot(project.root, project.lastModified);
+    }
+
     for (const root of fallbackRoots) addRoot(root);
 
     const tempRoot = resolve(tmpdir());
@@ -243,7 +254,7 @@ async function listKnownProjects(
           }
         }
 
-        let mtime = lastSeen || lastMined;
+        let mtime = discoveredLastModified.get(root) || lastSeen || lastMined;
         if (!mtime) {
           try {
             mtime = statSync(root).mtimeMs;
